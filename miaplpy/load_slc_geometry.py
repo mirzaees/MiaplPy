@@ -7,8 +7,7 @@ import os
 import glob
 import sys
 import datetime
-from mintpy.objects import (GEOMETRY_DSET_NAMES,
-                            geometry,
+from mintpy.objects import (geometry,
                             sensor)
 from miaplpy.objects.slcStack import slcStack
 from miaplpy.objects.geometryStack import geometryDict
@@ -37,7 +36,24 @@ datasetName2templateKey = {'slc': 'miaplpy.load.slcFile',
                            'bperp': 'miaplpy.load.bperpFile'
                            }
 
-
+GEOMETRY_DSET_NAMES = [
+    # coordinates
+    'height',
+    'latitude',
+    'longitude',
+    'rangeCoord',
+    'azimuthCoord',
+    'xCoord',
+    'yCoord',
+    # others
+    'incidenceAngle',
+    'azimuthAngle',
+    'slantRangeDistance',
+    'shadowMask',
+    'waterMask',
+    'commonMask',
+    'bperp',
+]
 #################################################################
 
 
@@ -60,13 +76,14 @@ def main(iargs=None):
 
     # read input options
     iDict = mut.read_inps2dict(inps)
-    
+
     # prepare metadata
     if not inps.no_metadata_check:
         mut.prepare_metadata(iDict)
 
-    # skip data writing for aria as it is included in prep_aria
-    if iDict['processor'] == 'aria':
+
+    # skip data writing for aria and isce3 as it is included in prep_aria and prep_isce3
+    if iDict['processor'] in ['aria']:
         return
 
     iDict = mut.read_subset_box(iDict)
@@ -83,10 +100,11 @@ def main(iargs=None):
     # prepare write
     #updateMode, comp, box, boxGeo, xyStep, xyStepGeo = mut.print_write_setting(iDict)
     #updateMode, comp, box, boxGeo = mld.print_write_setting(iDict)
+
     updateMode = iDict['updateMode']
     comp = iDict['compression']
     box = iDict['box']
-    if not iDict.get('geocoded', False):
+    if not iDict.get('geocoded', False) and not iDict['processor'] == 'isce3':
          boxGeo = iDict['box4geo_lut']
     else:
          boxGeo = box
@@ -126,7 +144,8 @@ def main(iargs=None):
                               box=boxGeo,
                               xstep=iDict['xstep'],
                               ystep=iDict['ystep'],
-                              compression='lzf')
+                              compression='lzf',
+                              extra_metadata=extraDict)
     return inps.out_file
 
 #################################################################
@@ -142,9 +161,13 @@ def read_inps_dict2geometry_dict_object(inpsDict):
     elif inpsDict['processor'] in ['roipac', 'gamma']:
         datasetName2templateKey.pop('latitude')
         datasetName2templateKey.pop('longitude')
-    elif inpsDict['processor'] in ['snap']:
+    elif inpsDict['processor'] in ['snap','aria', 'isce3']:
         # check again when there is a SNAP product in radar coordiantes
-        pass
+        datasetName2templateKey.pop('azimuthCoord')
+        datasetName2templateKey.pop('rangeCoord')
+        datasetName2templateKey['yCoord'] = datasetName2templateKey.pop('latitude')
+        datasetName2templateKey['xCoord'] = datasetName2templateKey.pop('longitude')
+        #pass
     else:
         print('Un-recognized InSAR processor: {}'.format(inpsDict['processor']))
 
@@ -159,8 +182,11 @@ def read_inps_dict2geometry_dict_object(inpsDict):
                    if i in datasetName2templateKey.keys()]:
         key = datasetName2templateKey[dsName]
         if key in inpsDict.keys():
-            files = sorted(glob.glob(str(inpsDict[key]) + '.xml'))
-            files = [item.split('.xml')[0] for item in files]
+            if inpsDict['processor'] == 'isce3':
+                files = sorted(glob.glob(str(inpsDict[key])))
+            else:
+                files = sorted(glob.glob(str(inpsDict[key]) + '.xml'))
+                files = [item.split('.xml')[0] for item in files]
             if len(files) > 0:
                 if dsName == 'bperp':
                     bperpDict = {}
@@ -178,6 +204,7 @@ def read_inps_dict2geometry_dict_object(inpsDict):
                                                        width=maxDigit,
                                                        path=files[0]))
 
+
     # Check required dataset
     dsName0 = GEOMETRY_DSET_NAMES[0]
     if dsName0 not in dsPathDict.keys():
@@ -188,7 +215,7 @@ def read_inps_dict2geometry_dict_object(inpsDict):
     slcKey = datasetName2templateKey['slc']
     if slcKey in inpsDict.keys():
         slcFiles = glob.glob(str(inpsDict[slcKey]))
-        if len(slcFiles) > 0:
+        if len(slcFiles) > 0 and inpsDict['processor'] != 'isce3':
             atr = readfile.read_attribute(slcFiles[0])
             if 'Y_FIRST' not in atr.keys():
                 slcRadarMetadata = atr.copy()
@@ -201,8 +228,12 @@ def read_inps_dict2geometry_dict_object(inpsDict):
         if dsName == 'bperp':
             atr = readfile.read_attribute(next(iter(dsPathDict[dsName].values())))
         else:
-            atr = mut.read_attribute(dsPathDict[dsName].split('.xml')[0], metafile_ext='.xml')
-        if 'Y_FIRST' in atr.keys():
+            if inpsDict['processor'] == 'isce3':
+                #atr = mut.read_attribute(dsPathDict[dsName].split('.geo')[0], metafile_ext='.hdr')
+                atr = inpsDict
+            else:
+                atr = mut.read_attribute(dsPathDict[dsName].split('.xml')[0], metafile_ext='.xml')
+        if 'Y_FIRST' in atr.keys() or inpsDict['processor'] == 'isce3':
             dsGeoPathDict[dsName] = dsPathDict[dsName]
         else:
             dsRadarPathDict[dsName] = dsPathDict[dsName]

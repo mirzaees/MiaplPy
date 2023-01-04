@@ -157,14 +157,16 @@ class slcStackDict:
                 prog_bar = ptime.progressBar(maxValue=self.numSlc)
 
                 for i in range(self.numSlc):
-                    slcObj = self.pairsDict[self.dates[i]]
-                    # fname, metadata = slcObj.read(dsName, box=box)
-                    fname, metadata = slcObj.read(dsName)
-
                     if not box:
                         box = (0, 0, self.width, self.length)
-                    dsSlc = gdal.Open(fname + '.vrt', gdal.GA_ReadOnly)
-                    ds[i, :, :] = dsSlc.GetRasterBand(1).ReadAsArray(int(box[0]), int(box[1]), self.width, self.length)
+
+                    slcObj = self.pairsDict[self.dates[i]]
+                    # fname, metadata = slcObj.read(dsName, box=box)
+                    #fname, metadata = slcObj.read(dsName)
+                    dsSlc, metadata = slcObj.read(dsName, box=box)
+                    ds[i, :, :] = dsSlc[:, :]
+                    #dsSlc = gdal.Open(fname + '.vrt', gdal.GA_ReadOnly)
+                    #ds[i, :, :] = dsSlc.GetRasterBand(1).ReadAsArray(int(box[0]), int(box[1]), self.width, self.length)
 
                     self.bperp[i] = slcObj.get_perp_baseline()
                     prog_bar.update(i+1, suffix='{}'.format(self.dates[i][0]))
@@ -529,7 +531,13 @@ class slcDict:
                 setattr(self, key, value)
 
     def read(self, family, box=None, datasetName=None):
-        fname = self.datasetDict[family].split('.xml')[0]
+
+        if self.datasetDict[family].endswith('h5'):
+            fname = self.datasetDict[family].split('.')[0]
+            fext = '.h5'
+        else:
+            fname = self.datasetDict[family].split('.xml')[0]
+            fext = os.path.splitext(os.path.basename(fname))[1].lower()
 
         # metadata
         dsname4atr = None  # used to determine UNIT
@@ -537,32 +545,52 @@ class slcDict:
             dsname4atr = datasetName[0].split('-')[0]
         elif isinstance(datasetName, str):
             dsname4atr = datasetName.split('-')[0]
+
         atr = read_attribute(fname, datasetName=dsname4atr, metafile_ext='.rsc')
 
-
         # Read Data
-        fext = os.path.splitext(os.path.basename(fname))[1].lower()
+
         if fext in ['.h5', '.he5']:
             # box
             length, width = int(atr['LENGTH']), int(atr['WIDTH'])
             if not box:
                 box = (0, 0, width, length)
-            data = readfile.read_hdf5_file(fname, datasetName=datasetName, box=box)
-            return data
+            if atr['PROCESSOR'] == 'isce3':
+                with h5py.File(self.datasetDict[family], 'r') as sds:
+                    data = sds['SLC'][atr['POLARIZATION']][box[1]:box[3], box[0]:box[2]]
+            else:
+                data = readfile.read_hdf5_file(fname, datasetName=datasetName, box=box)
+            return data, atr
         else:
+            length, width = int(atr['LENGTH']), int(atr['WIDTH'])
+            shape = (length, width)
+            if 'INTERLEAVE' in atr:
+                interleave = atr['INTERLEAVE'].upper()
+            else:
+                interleave = 'BIL'
+            data = readfile.read_binary(fname, shape, box=box, data_type='complex64', byte_order='l',
+                    num_band=1, interleave=interleave, band=1, cpx_band='cpx',
+                    xstep=1, ystep=1)
             # data, metadata = read_binary_file(fname, datasetName=datasetName, box=box)
-            metadata = read_binary_file(fname, datasetName=datasetName, attributes_only=True)
-            return fname, metadata
+            # metadata = read_binary_file(fname, datasetName=datasetName, attributes_only=True)
+            #return fname, metadata
+            return data, atr
 
     def get_size(self, family='slc'):
-        self.file = self.datasetDict[family].split('.xml')[0]
+        if self.datasetDict[family].endswith('h5'):
+            self.file = self.datasetDict[family].split('.')[0]
+        else:
+            self.file = self.datasetDict[family].split('.xml')[0]
         metadata = read_attribute(self.file, metafile_ext='.rsc')
         self.length = int(metadata['LENGTH'])
         self.width = int(metadata['WIDTH'])
         return self.length, self.width
 
     def get_perp_baseline(self, family='slc'):
-        self.file = self.datasetDict[family].split('.xml')[0]
+        if self.datasetDict[family].endswith('h5'):
+            self.file = self.datasetDict[family].split('.')[0]
+        else:
+            self.file = self.datasetDict[family].split('.xml')[0]
         metadata = read_attribute(self.file, metafile_ext='.rsc')
         self.bperp_top = float(metadata['P_BASELINE_TOP_HDR'])
         self.bperp_bottom = float(metadata['P_BASELINE_BOTTOM_HDR'])
@@ -570,7 +598,11 @@ class slcDict:
         return self.bperp
 
     def get_metadata(self, family='slc'):
-        self.file = self.datasetDict[family].split('.xml')[0]
+        if self.datasetDict[family].endswith('h5'):
+            self.file = self.datasetDict[family].split('.')[0]
+        else:
+            self.file = self.datasetDict[family].split('.xml')[0]
+
         self.metadata = read_attribute(self.file, metafile_ext='.rsc')
         self.length = int(self.metadata['LENGTH'])
         self.width = int(self.metadata['WIDTH'])

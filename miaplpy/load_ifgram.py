@@ -10,6 +10,7 @@ import glob
 import argparse
 import warnings
 import shutil
+import numpy as np
 from miaplpy.defaults import auto_path
 from mintpy.objects import (GEOMETRY_DSET_NAMES,
                             geometry,
@@ -21,7 +22,7 @@ from mintpy.objects.stackDict import (geometryDict,
                                       ifgramStackDict,
                                       ifgramDict)
 from mintpy.utils import readfile, ptime, utils as ut
-from miaplpy.objects.utils import check_template_auto_value, read_subset_template2box
+from miaplpy.objects.utils import check_template_auto_value, read_subset_template2box, read_attribute
 from mintpy import subset
 import datetime
 
@@ -182,6 +183,8 @@ def read_inps2dict(inps):
     if sensor_name:
         msg += str(sensor_name)
         inpsDict['PLATFORM'] = str(sensor_name)
+    elif template['miaplpy.load.processor'] == 'isce3':
+        inpsDict['PLATFORM'] = 'sen'
     else:
         msg += 'unknown from project name "{}"'.format(inpsDict['PROJECT_NAME'])
     print(msg)
@@ -204,11 +207,14 @@ def read_subset_box(inpsDict):
     pix_box, geo_box = read_subset_template2box(inpsDict['template_file'][0])
 
     # Grab required info to read input geo_box into pix_box
-    try:
-        lookupFile = [glob.glob(str(inpsDict['miaplpy.load.lookupYFile']))[0],
-                      glob.glob(str(inpsDict['miaplpy.load.lookupXFile']))[0]]
-    except:
-        lookupFile = None
+    if inpsDict['processor'] == 'isce3':
+        lookupFile = inpsDict['outdir'].split('/network_')[0] + '/inputs/slcStack.h5'
+    else:
+        try:
+            lookupFile = [glob.glob(str(inpsDict['miaplpy.load.lookupYFile']))[0],
+                          glob.glob(str(inpsDict['miaplpy.load.lookupXFile']))[0]]
+        except:
+            lookupFile = None
 
     try:
         pathKey = [i for i in datasetName2templateKey.values()
@@ -245,7 +251,6 @@ def read_subset_box(inpsDict):
 
     # geo_box --> pix_box
     coord = ut.coordinate(atr, lookup_file=lookupFile)
-
     if geo_box is not None:
         pix_box = (0, 0, int(atr['width']), int(atr['length']))    # coord.bbox_geo2radar(geo_box)
         pix_box = coord.check_box_within_data_coverage(pix_box)
@@ -255,7 +260,10 @@ def read_subset_box(inpsDict):
     # Get box for geocoded lookup table (for gamma/roipac)
     box4geo_lut = None
     if lookupFile is not None:
-        atrLut = readfile.read_attribute(lookupFile[0])
+        if inpsDict['processor'] == 'isce3':
+            atrLut = readfile.read_attribute(lookupFile)
+        else:
+            atrLut = readfile.read_attribute(lookupFile[0])
         if not geocoded and 'Y_FIRST' in atrLut.keys():
             geo_box = coord.bbox_radar2geo(pix_box)
             box4geo_lut = ut.coordinate(atrLut).bbox_geo2radar(geo_box)
@@ -264,6 +272,29 @@ def read_subset_box(inpsDict):
     inpsDict['box'] = pix_box
     inpsDict['box4geo_lut'] = box4geo_lut
     return inpsDict
+
+
+def prep_isce3(meta_file, obs_dir, obs_file, slc_files):
+    from mintpy.prep_isce import prepare_stack
+    #rsc_file = os.path.join(os.path.dirname(meta_file), 'data')
+    metadata = read_attribute(meta_file.split('.')[0], metafile_ext='.rsc')
+
+    slc_dirs = sorted(glob.glob(slc_files))
+    baseline_dict = {}
+    for i in range(len(slc_dirs)):
+        date = slc_dirs[i].split('/')[-2]
+        random_baseline = np.random.randint(1, 400)
+        baseline_dict[date] = [random_baseline, random_baseline]
+
+    if obs_dir is not None:
+        obs_files = obs_dir + '/*/' + obs_file
+    else:
+        obs_files = './inverted/interferograms_*/*/' + obs_file
+
+    #metadata['OG_FILE_PATH'] = slc_dirs[0]
+    print(obs_files)
+    prepare_stack(obs_files, metadata=metadata, baseline_dict=baseline_dict, update_mode=False)
+    return
 
 
 def prepare_metadata(inpsDict):
@@ -280,10 +311,13 @@ def prepare_metadata(inpsDict):
                 os.system(cmd)
 
     elif processor == 'isce':
+
         meta_files = sorted(glob.glob(inpsDict['miaplpy.load.metaFile']))
         if len(meta_files) < 1:
-            warnings.warn('No input metadata file found: {}'.format(inpsDict['miaplpy.load.metaFile']))
+            warn_message = 'No input metadata file found: {}'.format(inpsDict['miaplpy.load.metaFile'])
+            warnings.warn(warn_message)
         try:
+
             # metadata and auxliary data
             meta_file = meta_files[0]
             baseline_dir = inpsDict['miaplpy.load.baselineDir']
@@ -309,6 +343,22 @@ def prepare_metadata(inpsDict):
             os.system(cmd)
         except:
             pass
+    elif processor == 'isce3':
+        meta_dir = os.path.dirname(sorted(glob.glob(os.path.dirname(inpsDict['miaplpy.load.slcFile'])+'/topo.h5'))[0])
+        meta_file = meta_dir + '/data.src'
+        slc_files = inpsDict['miaplpy.load.slcFile']
+        # observation
+        obs_keys = ['miaplpy.load.unwFile', 'miaplpy.load.azOffFile']
+        obs_keys = [i for i in obs_keys if i in inpsDict.keys()]
+        obs_paths = [inpsDict[key] for key in obs_keys if inpsDict[key].lower() != 'auto']
+        if len(obs_paths) > 0:
+            obs_dir = os.path.dirname(os.path.dirname(obs_paths[0]))
+            obs_file = os.path.basename(obs_paths[0])
+        else:
+            obs_dir = None
+            obs_file = None
+        prep_isce3(meta_file, obs_dir, obs_file, slc_files)
+
     return
 
 
@@ -430,12 +480,11 @@ def main(iargs=None):
                                   ystep=inpsDict['ystep'],
                                   compression='lzf')
 
-
     # check loading result
     if not os.path.exists(os.path.join(work_dir, 'smallbaselineApp.cfg')):
         shutil.copyfile(os.path.join(os.path.dirname(work_dir), 'custom_smallbaselineApp.cfg'),
                         os.path.join(work_dir, 'smallbaselineApp.cfg'))
-    load_complete, stack_file, geom_file = ut.check_loaded_dataset(work_dir=work_dir, print_msg=True)[0:3]
+    stack_file, geom_file, lookup_file = ut.check_loaded_dataset(work_dir=work_dir, print_msg=True)[0:3]
 
     # add custom metadata (optional)
     customTemplate = inps.template_file[0]
@@ -450,16 +499,6 @@ def main(iargs=None):
         ut.add_attribute(geom_file, inpsDict)
 
     ut.add_attribute(stack_file, extraDict)
-
-    # if not load_complete, plot and raise exception
-    if not load_complete:
-        # go back to original directory
-        print('Go back to directory:', work_dir)
-        os.chdir(work_dir)
-
-        # raise error
-        msg = 'step load_ifgram: NOT all required dataset found, exit.'
-        raise SystemExit(msg)
 
     return inps.outfile
 

@@ -16,6 +16,23 @@ autoPath = True
 
 
 # Default path of data files from different InSAR processors to be loaded into MintPy
+isce3AutoPath = '''##----------Default file path of ISCE3 products
+miaplpy.load.processor      = isce3
+
+miaplpy.load.slcFile        = ${PROJECT_DIR}/stack/*/*/*_iw*.h5
+miaplpy.load.unwFile        = ${WORK_DIR}/inverted/interferograms_${int_type}/*/fi*.unw
+miaplpy.load.corFile        = ${WORK_DIR}/inverted/interferograms_${int_type}/*/fi*.cor
+miaplpy.load.connCompFile   = ${WORK_DIR}/inverted/interferograms_${int_type}/*/*.unw.conncomp
+
+miaplpy.load.demFile        = ${PROJECT_DIR}/stack/*/*/topo.h5
+miaplpy.load.lookupYFile    = ${PROJECT_DIR}/stack/*/*/topo.h5
+miaplpy.load.lookupXFile    = ${PROJECT_DIR}/stack/*/*/topo.h5
+miaplpy.load.incAngleFile   = ${PROJECT_DIR}/stack/*/*/topo.h5
+miaplpy.load.azAngleFile    = ${PROJECT_DIR}/stack/*/*/topo.h5
+miaplpy.load.shadowMaskFile = ${PROJECT_DIR}/stack/*/*/topo.h5
+
+'''
+
 isceTopsAutoPath = '''##----------Default file path of ISCE/topsStack products
 miaplpy.load.processor      = isce
 miaplpy.load.metaFile       = ${PROJECT_DIR}/reference/IW*.xml
@@ -95,10 +112,11 @@ miaplpy.load.bperpFile      = ${PROJECT_DIR}/merged/baselines/*/*.base_perp
 '''
 
 autoPathDict = {
+    'isce3'  : isce3AutoPath,
     'isceTops'  : isceTopsAutoPath,
     'isceStripmap'  : isceStripmapAutoPath,
-    'roipac': roipacAutoPath,
-    'gamma' : gammaAutoPath,
+    'roipac'  : roipacAutoPath,
+    'gamma'  : gammaAutoPath,
 }
 
 prefix = 'miaplpy.load.'
@@ -229,6 +247,16 @@ def get_auto_path(processor, work_dir, template=dict()):
     if m_date12:
         var_dict['${m_date12}'] = m_date12
 
+    if processor == 'isce3':
+        slc_dir = os.path.dirname(os.path.dirname(template['miaplpy.load.slcFile']))
+        # template['miaplpy.load.metaFile'] = glob.glob('{}/*/*.json'.format(slc_dir))[0]
+
+        if template['miaplpy.interferograms.networkType'] in ['delaunay', 'mini_stacks']:
+            print('WARNING: delaunay and mini_stacks are not supported for isce3 at the moment because of baselines')
+            print('Switch to single reference ...')
+            template['miaplpy.interferograms.networkType'] = 'single_reference'
+
+
     if not template['miaplpy.interferograms.list'] in [None, 'None', 'auto']:
         var_dict['${int_type}'] = 'list'
     else:
@@ -260,12 +288,13 @@ def get_auto_path(processor, work_dir, template=dict()):
             template[key] = value
 
     if not os.path.exists(template['miaplpy.load.baselineDir']):
-        template['miaplpy.load.baselineDir'] = os.path.join(work_dir, 'inputs/baselines')
+        if processor in ['isceTops', 'isceStripmap']:
+            template['miaplpy.load.baselineDir'] = os.path.join(work_dir, 'inputs/baselines')
 
     if not os.path.exists(os.path.dirname(template['miaplpy.load.metaFile'])):
         if processor == 'isceTops':
             template['miaplpy.load.metaFile'] = os.path.join(work_dir, 'inputs/reference/IW*.xml')
-        else:
+        elif processor == 'isceStripmap':
             template['miaplpy.load.metaFile'] = os.path.join(work_dir, 'inputs/reference/data.dat')
 
     return template

@@ -10,6 +10,7 @@ from libc.stdio cimport printf
 from miaplpy.objects.slcStack import slcStack
 import h5py
 import time
+import isceobj
 from isceobj.Util.ImageUtil import ImageLib as IML
 
 
@@ -65,6 +66,7 @@ cdef class CPhaseLink:
         self.patch_size = np.int32(inps.patch_size)
         self.ps_shp = np.int32(inps.ps_shp)
         self.out_dir = self.work_dir + b'/inverted'
+        self.num_archived = np.int32(inps.num_archived)
         os.makedirs(self.out_dir.decode('UTF-8'), exist_ok='True')
 
         self.slcStackObj = slcStack(inps.slc_stack)
@@ -100,7 +102,6 @@ cdef class CPhaseLink:
         self.window_for_shp()
 
         self.RSLCfile = self.out_dir + b'/phase_series.h5'
-
 
         if b'sequential' == self.phase_linking_method[0:10]:
             self.sequential = True
@@ -188,6 +189,19 @@ cdef class CPhaseLink:
                                     chunks=True,
                                     dtype=np.float32)
 
+                if b'real_time' == self.phase_linking_method[0:9]:
+                    RSLC.create_dataset('phase_seq',
+                                        shape=(self.n_image, self.length, self.width),
+                                        maxshape=(None, self.length, self.width),
+                                        chunks=True,
+                                        dtype=np.float32)
+
+                    RSLC.create_dataset('amplitude_seq',
+                                        shape=(self.n_image, self.length, self.width),
+                                        maxshape=(None, self.length, self.width),
+                                        chunks=True,
+                                        dtype=np.float32)
+
                 RSLC.create_dataset('shp',
                                     shape=(self.length, self.width),
                                     maxshape=(self.length, self.width),
@@ -257,6 +271,7 @@ cdef class CPhaseLink:
             "out_dir": self.out_dir,
             "time_lag": self.time_lag,
             "mask_file": self.mask_file,
+            "num_archived": self.num_archived,
         }
         return data_kwargs
 
@@ -283,7 +298,7 @@ cdef class CPhaseLink:
         cdef int index, box_length, box_width
         cdef cnp.ndarray[int, ndim=1] box
         cdef bytes patch_dir
-        cdef float complex[:, :, ::1] rslc_ref
+        cdef float complex[:, :, ::1] rslc_ref, rslc_ref_seq
         cdef cnp.ndarray[float, ndim=3] temp_coh, ps_prod, eig_values = np.zeros((3, self.length, self.width), dtype=np.float32)
         cdef cnp.ndarray[float, ndim=2] amp_disp = np.zeros((self.length, self.width), dtype=np.float32)
 
@@ -311,6 +326,8 @@ cdef class CPhaseLink:
                 shp = np.load(patch_dir.decode('UTF-8') + '/shp.npy', allow_pickle=True)
                 mask_ps = np.load(patch_dir.decode('UTF-8') + '/mask_ps.npy', allow_pickle=True)
                 ps_prod = np.load(patch_dir.decode('UTF-8') + '/ps_products.npy', allow_pickle=True)
+                if b'real_time' == self.phase_linking_method[0:9]:
+                    rslc_ref_seq = np.load(patch_dir.decode('UTF-8') + '/phase_ref_seq.npy', allow_pickle=True)
 
                 temp_coh[temp_coh<0] = 0
 
@@ -322,6 +339,9 @@ cdef class CPhaseLink:
                 #write_hdf5_block_3D(fhandle, rslc_ref, b'slc', block)
                 write_hdf5_block_3D(fhandle, np.angle(rslc_ref), b'phase', block)
                 write_hdf5_block_3D(fhandle, np.abs(rslc_ref), b'amplitude', block)
+                if b'real_time' == self.phase_linking_method[0:9]:
+                    write_hdf5_block_3D(fhandle, np.angle(rslc_ref_seq), b'phase_seq', block)
+                    write_hdf5_block_3D(fhandle, np.abs(rslc_ref_seq), b'amplitude_seq', block)
 
                 # SHP - 2D
                 block = [box[1], box[3], box[0], box[2]]

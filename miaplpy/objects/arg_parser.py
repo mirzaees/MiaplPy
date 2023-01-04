@@ -64,10 +64,12 @@ class MiaplPyParser:
                     {}\n
                     {}\n
                     {}\n
+                    {}\n
                     """.format(auto_path.isceTopsAutoPath,
                                auto_path.isceStripmapAutoPath,
                                auto_path.roipacAutoPath,
-                               auto_path.gammaAutoPath)
+                               auto_path.gammaAutoPath,
+                               auto_path.isce3AutoPath)
 
         if inps.template_file:
             pass
@@ -260,9 +262,11 @@ class MiaplPyParser:
         parser.add_argument('-d', '--work_dir', dest='work_dir', default=None,
                             help='Working directory of miaplpy (default ./miaplpy)')
         parser.add_argument('-pr', '--processor', type=str, dest='processor',
-                            choices={'isce', 'gamma', 'roipac'},
+                            choices={'isce', 'gamma', 'roipac', 'isce3'},
                             help='InSAR processor/software of the file (This version only supports isce)',
                             default='isce')
+        parser.add_argument('-p', '--platform', type=str, dest='PLATFORM',
+                            choices={'s1','tsx','csk'}, help='data platform', default='None')
         parser.add_argument('--enforce', '-f', dest='updateMode', action='store_false',
                             help='Disable the update mode, or skip checking dataset already loaded.')
         parser.add_argument('--compression', choices={'gzip', 'lzf', None}, default=None,
@@ -286,7 +290,7 @@ class MiaplPyParser:
         patch.add_argument('-a', '--azimuth_window', type=int, dest='azimuth_window', default=15,
                            help='Azimuth window size for shp finding')
         patch.add_argument('-m', '--method', type=str, dest='inversion_method', default='EMI',
-                           help='Inversion method (EMI, EVD, PTA, sequential_EMI, ...)')
+                           help='Inversion method (real_time, EMI, EVD, PTA, sequential_EMI, ...)')
         patch.add_argument('-l', '--time_lag', type=int, dest='time_lag', default=10,
                            help='Time lag in case StBAS is used')
         patch.add_argument('-t', '--test', type=str, dest='shp_test', default='ks',
@@ -301,6 +305,8 @@ class MiaplPyParser:
         patch.add_argument('-ms', '--mask', type=str, dest='mask_file', default='None', help='mask file for inversion')
         patch.add_argument('-n', '--num_worker', dest='num_worker', type=int, default=1,
                            help='Number of parallel tasks (default: 1)')
+        patch.add_argument('-na', '--num_archived', dest='num_archived', type=int, default=0,
+                           help='Number of archived images in case of real time')
         patch.add_argument('-i', '--index', dest='sub_index', type=str, default=None,
                            help='The list containing patches of i*num_worker:(i+1)*num_worker')
         patch.add_argument('-c', '--concatenate', dest='do_concatenate', action='store_false',

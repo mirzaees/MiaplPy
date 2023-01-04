@@ -27,7 +27,7 @@ enablePrint()
 
 def main(iargs=None):
     """
-        Overwrite filtered SLC images in Isce merged/SLC directory.
+        Overwrite filtered SLC images in ISCE merged/SLC directory.
     """
 
     Parser = MiaplPyParser(iargs, script='generate_interferograms')
@@ -72,51 +72,121 @@ def run_interferogram(inps, resampName):
     else:
         extention = '.slc'
 
-    with h5py.File(inps.stack_file, 'r') as ds:
-        date_list = np.array([x.decode('UTF-8') for x in ds['date'][:]])
-        ref_ind = np.where(date_list==inps.reference)[0]
-        sec_ind = np.where(date_list==inps.secondary)[0]
-        phase_series = ds['phase']
-        amplitudes = ds['amplitude']
+    #sequential = True
+    sequential = False
 
-        length = phase_series.shape[1]
-        width = phase_series.shape[2]
+    if sequential:
+        # sequential interferograms
+        with h5py.File(inps.stack_file, 'r') as ds:
+            date_list = np.array([x.decode('UTF-8') for x in ds['date'][:]])
+            ref_ind = np.where(date_list == inps.reference)[0][0]
+            sec_ind = np.where(date_list == inps.secondary)[0][0]
+            phase_series = ds['phase_seq']
+            amplitudes = ds['amplitude_seq']
+            length = phase_series.shape[1]
+            width = phase_series.shape[2]
 
-        resampInt = resampName + '.int'
+            resampInt = resampName + '.int'
 
-        intImage = isceobj.createIntImage()
-        intImage.setFilename(resampInt)
-        intImage.setAccessMode('write')
-        intImage.setWidth(width)
-        intImage.setLength(length)
-        intImage.createImage()
+            intImage = isceobj.createIntImage()
+            intImage.setFilename(resampInt)
+            intImage.setAccessMode('write')
+            intImage.setWidth(width)
+            intImage.setLength(length)
+            intImage.createImage()
 
-        out_ifg = intImage.asMemMap(resampInt)
-        box_size = 3000
-        num_row = int(np.ceil(length / box_size))
-        num_col = int(np.ceil(width / box_size))
-        for i in range(num_row):
-            for k in range(num_col):
-                row_1 = i * box_size
-                row_2 = i * box_size + box_size
-                col_1 = k * box_size
-                col_2 = k * box_size + box_size
-                if row_2 > length:
-                    row_2 = length
-                if col_2 > width:
-                    col_2 = width
+            out_ifg = intImage.asMemMap(resampInt)
+            box_size = 3000
+            num_row = int(np.ceil(length / box_size))
+            num_col = int(np.ceil(width / box_size))
 
-                ref_phase = phase_series[ref_ind, row_1:row_2, col_1:col_2].reshape(row_2 - row_1, col_2 - col_1)
-                sec_phase = phase_series[sec_ind, row_1:row_2, col_1:col_2].reshape(row_2 - row_1, col_2 - col_1)
-                ref_amplitude = amplitudes[ref_ind, row_1:row_2, col_1:col_2].reshape(row_2 - row_1, col_2 - col_1)
-                sec_amplitude = amplitudes[sec_ind, row_1:row_2, col_1:col_2].reshape(row_2 - row_1, col_2 - col_1)
+            for i in range(num_row):
+                for k in range(num_col):
+                    row_1 = i * box_size
+                    row_2 = i * box_size + box_size
+                    col_1 = k * box_size
+                    col_2 = k * box_size + box_size
+                    if row_2 > length:
+                        row_2 = length
+                    if col_2 > width:
+                        col_2 = width
 
-                ifg = (ref_amplitude * sec_amplitude) * np.exp(1j * (ref_phase - sec_phase))
+                    ref_phase = phase_series[ref_ind, row_1:row_2, col_1:col_2].reshape(row_2 - row_1, col_2 - col_1)
+                    sec_phase = phase_series[sec_ind, row_1:row_2, col_1:col_2].reshape(row_2 - row_1, col_2 - col_1)
+                    ref_amplitude = amplitudes[ref_ind, row_1:row_2, col_1:col_2].reshape(row_2 - row_1, col_2 - col_1)
+                    sec_amplitude = amplitudes[sec_ind, row_1:row_2, col_1:col_2].reshape(row_2 - row_1, col_2 - col_1)
 
-                out_ifg[row_1:row_2, col_1:col_2, 0] = ifg[:, :]
+                    if ref_ind - sec_ind == 1:
+                        ifg = ref_amplitude * np.exp(1j * ref_phase)
+                    if ref_ind - sec_ind == -1:
+                        ifg = sec_amplitude * np.exp(-1j * sec_phase)
+                    if (ref_ind - sec_ind) > 1:
+                        phase = ref_phase + sec_phase
+                        for ti in range(sec_ind+1, ref_ind):
+                            sec_phase = phase_series[ti, row_1:row_2, col_1:col_2].reshape(row_2 - row_1, col_2 - col_1)
+                            phase += sec_phase
+                        ifg = (ref_amplitude * sec_amplitude) * np.exp(1j * phase)
+                    if (ref_ind - sec_ind) < 1:
+                        phase = ref_phase + sec_phase
+                        for ti in range(ref_ind + 1, sec_ind):
+                            sec_phase = phase_series[ti, row_1:row_2, col_1:col_2].reshape(row_2 - row_1, col_2 - col_1)
+                            phase += sec_phase
+                        ifg = (ref_amplitude * sec_amplitude) * np.exp(-1j * phase)
 
-        intImage.renderHdr()
-        intImage.finalizeImage()
+                    ifg[np.isnan(ifg)] = 0 + 1j*0
+                    out_ifg[row_1:row_2, col_1:col_2, 0] = ifg[:, :]
+
+            intImage.renderHdr()
+            intImage.finalizeImage()
+
+    else:
+
+        with h5py.File(inps.stack_file, 'r') as ds:
+            date_list = np.array([x.decode('UTF-8') for x in ds['date'][:]])
+            ref_ind = np.where(date_list == inps.reference)[0]
+            sec_ind = np.where(date_list == inps.secondary)[0]
+            phase_series = ds['phase']
+            amplitudes = ds['amplitude']
+
+            length = phase_series.shape[1]
+            width = phase_series.shape[2]
+
+            resampInt = resampName + '.int'
+
+            intImage = isceobj.createIntImage()
+            intImage.setFilename(resampInt)
+            intImage.setAccessMode('write')
+            intImage.setWidth(width)
+            intImage.setLength(length)
+            intImage.createImage()
+
+            out_ifg = intImage.asMemMap(resampInt)
+            box_size = 3000
+            num_row = int(np.ceil(length / box_size))
+            num_col = int(np.ceil(width / box_size))
+            for i in range(num_row):
+                for k in range(num_col):
+                    row_1 = i * box_size
+                    row_2 = i * box_size + box_size
+                    col_1 = k * box_size
+                    col_2 = k * box_size + box_size
+                    if row_2 > length:
+                        row_2 = length
+                    if col_2 > width:
+                        col_2 = width
+
+                    ref_phase = phase_series[ref_ind, row_1:row_2, col_1:col_2].reshape(row_2 - row_1, col_2 - col_1)
+                    sec_phase = phase_series[sec_ind, row_1:row_2, col_1:col_2].reshape(row_2 - row_1, col_2 - col_1)
+                    ref_amplitude = amplitudes[ref_ind, row_1:row_2, col_1:col_2].reshape(row_2 - row_1, col_2 - col_1)
+                    sec_amplitude = amplitudes[sec_ind, row_1:row_2, col_1:col_2].reshape(row_2 - row_1, col_2 - col_1)
+
+                    ifg = (ref_amplitude * sec_amplitude) * np.exp(1j * (ref_phase - sec_phase))
+
+                    ifg[np.isnan(ifg)] = 0 + 1j * 0
+                    out_ifg[row_1:row_2, col_1:col_2, 0] = ifg[:, :]
+
+            intImage.renderHdr()
+            intImage.finalizeImage()
 
     return length, width
 
@@ -255,7 +325,7 @@ def distance(point1,point2):
 def gaussianLP(D0,imgShape):
     base = np.zeros(imgShape[:2])
     rows, cols = imgShape[:2]
-    center = (rows/2,cols/2)
+    center = (rows/2, cols/2)
     for x in range(cols):
         for y in range(rows):
             base[y,x] = exp(((-distance((y,x),center)**2)/(2*(D0**2))))

@@ -117,7 +117,8 @@ def phase_invert(inps, inversionObj):
                    def_sample_cols=data_kwargs['def_sample_cols'],
                    out_dir=data_kwargs['out_dir'],
                    lag=data_kwargs['time_lag'],
-                   mask_file=data_kwargs['mask_file'])
+                   mask_file=data_kwargs['mask_file'],
+                   num_archived=data_kwargs['num_archived'])
 
     print('Reading SLC data from {} and inverting patches in parallel ...'.format(inps.slc_stack))
 

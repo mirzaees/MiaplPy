@@ -211,7 +211,6 @@ def read_attribute(fname, datasetName=None, standardize=True, metafile_ext=None)
                     standardize : bool, grab standardized metadata key name
         Returns:    atr : dict, attributes dictionary
         """
-
     fbase, fext = os.path.splitext(os.path.basename(fname))
     fext = fext.lower()
     if metafile_ext is None:
@@ -530,7 +529,7 @@ def check_template_auto_value(templateDict, mintpyTemplateDict=None, auto_file='
 
 
 ########################################################################################
-def read(fname, box=None, datasetName=None, print_msg=True):
+def read(fname, box=None, datasetName=None, data_type=np.float32, print_msg=True):
     """Read one dataset and its attributes from input file.
     Parameters: fname : str, path of file to read
                 datasetName : str or list of str, slice names
@@ -560,6 +559,11 @@ def read(fname, box=None, datasetName=None, print_msg=True):
     fext0 = ['.' + i.split('.')[-1] for i in files if os.path.exists(i)][0]
 
     atr = read_attribute(fname, datasetName=dsname4atr, metafile_ext=fext0)
+
+    if 'INTERLEAVE' in atr:
+        interleave = atr['INTERLEAVE'].upper()
+    else:
+        interleave = 'BIL'
 
     # box
     length, width = int(atr['LENGTH']), int(atr['WIDTH'])
@@ -667,7 +671,8 @@ def read_binary_file(fname, datasetName=None, box=None, attributes_only=False):
     fext = fext.lower()
 
     # metadata
-    atr = read_attribute(fname, metafile_ext='.xml')
+    #atr = read_attribute(fname, metafile_ext='.xml')
+    atr = read_attribute(fname, metafile_ext='.rsc')
     processor = atr['PROCESSOR']
     length = int(atr['LENGTH'])
     width = int(atr['WIDTH'])
@@ -802,6 +807,13 @@ def read_binary_file(fname, datasetName=None, box=None, attributes_only=False):
         if 'byte order' in atr.keys() and atr['byte order'] == '0':
             byte_order = 'little-endian'
 
+    elif processor == 'isce3':
+        band_interleave = atr.get('INTERLEAVE', 'BSQ').upper()
+        byte_order = 'little-endian'
+        data_type = 'float32'
+        if fname.split('/')[-1] in ['layoverShadowMask.geo']:
+            data_type = 'bool_'
+
     else:
         print('Unknown InSAR processor.')
     
@@ -812,7 +824,12 @@ def read_binary_file(fname, datasetName=None, box=None, attributes_only=False):
         return atr
     else:
         # reading
-        data = read_image(fname, box=box, band=band)
+        print(fname)
+        shape = (length, width)
+        data = readfile.read_binary(fname, shape, box=box, data_type=data_type, byte_order=byte_order,
+                    num_band=1, interleave=band_interleave, band=1, cpx_band=cpx_band,
+                    xstep=1, ystep=1)
+        # data = read_image(fname, box=box, band=band)
         return data, atr
 
 
@@ -1104,79 +1121,117 @@ def read_subset_box(inpsDict):
     # Read subset info from template
     inpsDict['box'] = None
     inpsDict['box4geo_lut'] = None
-
     pix_box, geo_box = read_subset_template2box(inpsDict['template_file'][0])
     #pix_box, geo_box = subset.read_subset_template2box(inpsDict['template_file'][0])
 
-    # Grab required info to read input geo_box into pix_box
+    if inpsDict['processor'] == 'isce3':
+        meta_dir = os.path.dirname(sorted(glob.glob(os.path.dirname(inpsDict['miaplpy.load.slcFile'])+'/topo.h5'))[0])
+        metadata = read_attribute(meta_dir + '/data', metafile_ext='.rsc')
+        if geo_box is not None:
+            from pyproj.transformer import Transformer
+            geogrid_dict = eval(metadata['geogrid'])
+            epsg_dest = geogrid_dict['epsg']
+            epsg_src = 4326
+            t = Transformer.from_crs(epsg_src, epsg_dest, always_xy=True)
 
-    try:
-        lookupFile = [glob.glob(str(inpsDict['miaplpy.load.lookupYFile'] + '.xml'))[0],
-                      glob.glob(str(inpsDict['miaplpy.load.lookupXFile'] + '.xml'))[0]]
-        lookupFile = [x.split('.xml')[0] for x in lookupFile]
-    except:
-        lookupFile = None
+            xmin, ymin, xmax, ymax = geo_box[0], geo_box[3], geo_box[2], geo_box[1]
+            xs, ys = np.array([(xmin, ymin), (xmax, ymax)]).T
+            xt, yt = t.transform(xs, ys)
 
-    try:
+            x0 = int((xt[0] - geogrid_dict['start_x'])/geogrid_dict['spacing_x'])
+            if x0 < 0:
+                x0 = 0
+            x1 = int((xt[1] - geogrid_dict['start_x']) / geogrid_dict['spacing_x'])
+            if x1 > geogrid_dict['width']:
+                x1 = geogrid_dict['width']
+            y0 = int((yt[0] - geogrid_dict['start_y']) / geogrid_dict['spacing_y'])
+            if y0 < 0:
+                y0 = 0
+            y1 = int((yt[1] - geogrid_dict['start_y']) / geogrid_dict['spacing_y'])
+            if y1 > geogrid_dict['length']:
+                y1 = geogrid_dict['length']
 
+            pix_box = [x0, y0, x1, y1]
+        
         pathKey = [i for i in datasetName2templateKey.values()
                    if i in inpsDict.keys()][0]
 
-        file = glob.glob(str(inpsDict[pathKey] + '.xml'))[0]
-        atr = read_attribute(file.split('.xml')[0], metafile_ext='.rsc')
-    except:
-        atr = dict()
-    geocoded = None
-    if 'Y_FIRST' in atr.keys():
-        geocoded = True
+        file = glob.glob(str(inpsDict[pathKey]))[0]
+        atr = read_attribute(file.split('.h5')[0], metafile_ext='.rsc')
+
     else:
-        geocoded = False
+        metadata = read_attribute(os.path.dirname(inpsDict['miaplpy.load.metaFile']) + '/data', metafile_ext='.rsc')
+        # Grab required info to read input geo_box into pix_box
 
-    # Check conflict
-    if geo_box and not geocoded and lookupFile is None:
-        geo_box = None
-        print(('WARNING: mintpy.subset.lalo is not supported'
-               ' if 1) no lookup file AND'
-               '    2) radar/unkonwn coded dataset'))
-        print('\tignore it and continue.')
+        try:
+            lookupFile = [glob.glob(str(inpsDict['miaplpy.load.lookupYFile'] + '.xml'))[0],
+                          glob.glob(str(inpsDict['miaplpy.load.lookupXFile'] + '.xml'))[0]]
+            lookupFile = [x.split('.xml')[0] for x in lookupFile]
+        except:
+            lookupFile = None
 
-    if not geo_box and not pix_box:
-        # adjust for the size inconsistency problem in SNAP geocoded products
-        # ONLY IF there is no input subset
-        # Use the min bbox if files size are different
-        if inpsDict['processor'] == 'snap':
-            fnames = ut.get_file_list(inpsDict['miaplpy.load.slcFile'])
-            pix_box = mld.update_box4files_with_inconsistent_size(fnames)
+        try:
 
-        #if not pix_box:
-        #    return inpsDict
+            pathKey = [i for i in datasetName2templateKey.values()
+                       if i in inpsDict.keys()][0]
 
-    # geo_box --> pix_box
-    coord = coord_rev(atr, lookup_file=lookupFile)
-    if geo_box is not None:
-        pix_box = coord.bbox_geo2radar(geo_box)
-        pix_box = coord.check_box_within_data_coverage(pix_box)
-        print('input bounding box of interest in lalo: {}'.format(geo_box))
-    print('box to read for datasets in y/x: {}'.format(pix_box))
+            file = glob.glob(str(inpsDict[pathKey] + '.xml'))[0]
+            atr = read_attribute(file.split('.xml')[0], metafile_ext='.rsc')
+        except:
+            atr = dict()
+        geocoded = None
+        if 'Y_FIRST' in atr.keys():
+            geocoded = True
+        else:
+            geocoded = False
 
-    # Get box for geocoded lookup table (for gamma/roipac)
-    box4geo_lut = None
-    if lookupFile is not None:
-        atrLut = read_attribute(lookupFile[0], metafile_ext='.xml')
-        if not geocoded and 'Y_FIRST' in atrLut.keys():
-            geo_box = coord.bbox_radar2geo(pix_box)
-            box4geo_lut = ut.coordinate(atrLut).bbox_geo2radar(geo_box)
-            print('box to read for geocoded lookup file in y/x: {}'.format(box4geo_lut))
+        # Check conflict
+        if geo_box and not geocoded and lookupFile is None:
+            geo_box = None
+            print(('WARNING: mintpy.subset.lalo is not supported'
+                   ' if 1) no lookup file AND'
+                   '    2) radar/unkonwn coded dataset'))
+            print('\tignore it and continue.')
 
-    if pix_box in [None, 'None'] and 'WIDTH' in atr:
-        pix_box = (0, 0, int(atr['WIDTH']), int(atr['LENGTH']))
+        if not geo_box and not pix_box:
+            # adjust for the size inconsistency problem in SNAP geocoded products
+            # ONLY IF there is no input subset
+            # Use the min bbox if files size are different
+            if inpsDict['processor'] == 'snap':
+                fnames = ut.get_file_list(inpsDict['miaplpy.load.slcFile'])
+                pix_box = mld.update_box4files_with_inconsistent_size(fnames)
+
+            #if not pix_box:
+            #    return inpsDict
+
+        # geo_box --> pix_box
+        coord = coord_rev(atr, lookup_file=lookupFile)
+        if geo_box is not None:
+            pix_box = coord.bbox_geo2radar(geo_box)
+            pix_box = coord.check_box_within_data_coverage(pix_box)
+            print('input bounding box of interest in lalo: {}'.format(geo_box))
+        print('box to read for datasets in y/x: {}'.format(pix_box))
+
+        # Get box for geocoded lookup table (for gamma/roipac)
+        box4geo_lut = None
+        if lookupFile is not None:
+            atrLut = read_attribute(lookupFile[0], metafile_ext='.xml')
+            if not geocoded and 'Y_FIRST' in atrLut.keys():
+                geo_box = coord.bbox_radar2geo(pix_box)
+                box4geo_lut = ut.coordinate(atrLut).bbox_geo2radar(geo_box)
+                print('box to read for geocoded lookup file in y/x: {}'.format(box4geo_lut))
+
+        inpsDict['box4geo_lut'] = box4geo_lut
 
     for key in atr:
         if not key in inpsDict or inpsDict[key] in [None, 'NONE']:
             inpsDict[key] = atr[key]
 
+    if pix_box in [None, 'None'] and 'WIDTH' in metadata:
+        pix_box = (0, 0, int(metadata['WIDTH']), int(metadata['LENGTH']))
+
     inpsDict['box'] = pix_box
-    inpsDict['box4geo_lut'] = box4geo_lut
+
     return inpsDict
 
 
@@ -1222,6 +1277,8 @@ def read_initial_info(work_dir, templateFile):
         inps_loadSlc = Parser_LoadSlc.parse()
         iDict = read_inps2dict(inps_loadSlc)
         prepare_metadata(iDict)
+        #meta_file = prepare_metadata(iDict)
+        #iDict['miaplpy.load.metaFile'] = meta_file
         metadata = read_subset_box(iDict)
         box = metadata['box']
         num_pixels = (box[2] - box[0]) * (box[3] - box[1])
@@ -1289,15 +1346,16 @@ def read_inps2dict(inps):
                                            work_dir=inps.work_dir,
                                            template=inpsDict)
 
-    reference_dir = os.path.dirname(inpsDict['miaplpy.load.metaFile'])
-    out_reference = inps.work_dir + '/inputs/reference'
-    if not os.path.exists(out_reference):
-        shutil.copytree(reference_dir, out_reference)
+    if inpsDict['processor'] in ['isceTops', 'isceStripmap']:
+        reference_dir = os.path.dirname(inpsDict['miaplpy.load.metaFile'])
+        out_reference = inps.work_dir + '/inputs/reference'
+        if not os.path.exists(out_reference):
+            shutil.copytree(reference_dir, out_reference)
 
-    baseline_dir = os.path.abspath(inpsDict['miaplpy.load.baselineDir'])
-    out_baseline = inps.work_dir + '/inputs/baselines'
-    if not os.path.exists(out_baseline):
-        shutil.copytree(baseline_dir, out_baseline)
+        baseline_dir = os.path.abspath(inpsDict['miaplpy.load.baselineDir'])
+        out_baseline = inps.work_dir + '/inputs/baselines'
+        if not os.path.exists(out_baseline):
+            shutil.copytree(baseline_dir, out_baseline)
 
     return inpsDict
 
@@ -1308,6 +1366,7 @@ def prepare_metadata(inpsDict):
     script_name = 'prep_slc_{}.py'.format(processor)
     print('-' * 50)
     print('prepare metadata files for {} products'.format(processor))
+
     if processor in ['gamma', 'roipac', 'snap']:
         for key in [i for i in inpsDict.keys() if (i.startswith('miaplpy.load.') and i.endswith('File'))]:
             if len(glob.glob(str(inpsDict[key]))) > 0:
@@ -1336,6 +1395,21 @@ def prepare_metadata(inpsDict):
             os.system(cmd)
         except:
             pass
+    elif processor == 'isce3':
+        slc_dir = os.path.dirname(os.path.dirname(inpsDict['miaplpy.load.slcFile']))
+        slc_file = os.path.basename(inpsDict['miaplpy.load.slcFile'])
+        #meta_file = glob.glob('{}/*/*.json'.format(slc_dir))[0]
+        geo_files = ['miaplpy.load.demFile', 'miaplpy.load.lookupYFile', 'miaplpy.load.lookupXFile',
+                     'miaplpy.load.incAngleFile', 'miaplpy.load.azAngleFile', 'miaplpy.load.shadowMaskFile']
+        geom_dir = [os.path.dirname(inpsDict[gfile]) for gfile in geo_files if inpsDict[gfile] is not 'auto'][0]
+        cmd = '{s} -s {i} -f {f} -g {g}'.format(s=script_name,
+                                                i=slc_dir,
+                                                f=slc_file,
+                                                g=geom_dir)
+
+        print(cmd)
+        os.system(cmd)
+
     return
 
 
@@ -1435,7 +1509,10 @@ def read_inps_dict2slc_stack_dict_object(inpsDict):
                    if i in datasetName2templateKey.keys()]:
         key = datasetName2templateKey[dsName]
         if key in inpsDict.keys():
-            files = sorted(glob.glob(str(inpsDict[key] + '.xml')))
+            if inpsDict['processor'] == 'isce3':
+                files = sorted(glob.glob(str(inpsDict[key])))
+            else:
+                files = sorted(glob.glob(str(inpsDict[key] + '.xml')))
             if len(files) > 0:
                 dsPathDict[dsName] = files
                 print('{:<{width}}: {path}'.format(dsName,
@@ -1451,7 +1528,8 @@ def read_inps_dict2slc_stack_dict_object(inpsDict):
     # Check 2: data dimension for slc files
     dsPathDict = skip_files_with_inconsistent_size(dsPathDict,
                                                    pix_box=inpsDict['box'],
-                                                   dsName=dsName0)
+                                                   dsName=dsName0,
+                                                   processor=inpsDict['processor'])
 
     # Check 3: number of files for all dataset types
     # dsPathDict --> dsNumDict
@@ -1482,7 +1560,10 @@ def read_inps_dict2slc_stack_dict_object(inpsDict):
     pairsDict = {}
 
     for dsPath in dsPathDict[dsName0]:
-        dates = ptime.yyyymmdd(read_attribute(dsPath.split('.xml')[0], metafile_ext='.rsc')['DATE'])
+        if inpsDict['processor'] == 'isce3':
+            dates = dsPath.split('/')[-2]
+        else:
+            dates = ptime.yyyymmdd(read_attribute(dsPath.split('.h5')[0], metafile_ext='.rsc')['DATE'])
         date_val = datetime.datetime.strptime(dates, '%Y%m%d')
         include_date = True
         if not start_date is None and start_date > date_val:
@@ -1520,9 +1601,14 @@ def read_inps_dict2slc_stack_dict_object(inpsDict):
 
 
 
-def skip_files_with_inconsistent_size(dsPathDict, pix_box=None, dsName='slc'):
+def skip_files_with_inconsistent_size(dsPathDict, pix_box=None, dsName='slc', processor='isce'):
     """Skip files by removing the file path from the input dsPathDict."""
-    atr_list = [read_attribute(fname.split('.xml')[0], metafile_ext='.xml') for fname in dsPathDict[dsName]]
+
+    if processor == 'isce3':
+        atr_list = [read_attribute(fname.split('.h5')[0], metafile_ext='.rsc') for fname in dsPathDict[dsName]]
+
+    else:
+        atr_list = [read_attribute(fname.split('.xml')[0], metafile_ext='.xml') for fname in dsPathDict[dsName]]
     length_list = [int(atr['LENGTH']) for atr in atr_list]
     width_list = [int(atr['WIDTH']) for atr in atr_list]
 

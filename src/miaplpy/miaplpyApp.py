@@ -2,6 +2,7 @@
 ########################
 # Author: Sara Mirzaee
 #######################
+import glob
 import logging
 import warnings
 
@@ -133,8 +134,6 @@ class miaplpyTimeSeriesAnalysis(TimeSeriesAnalysis):
 
         self.projectName = self.inps.projectName
 
-        #self.run_dir = os.path.join(self.workDir, pathObj.rundir)
-        #os.makedirs(self.run_dir, exist_ok=True)
 
         name_ifg_network = self.template['miaplpy.interferograms.networkType']
         if self.template['miaplpy.interferograms.networkType'] == 'delaunay':
@@ -314,8 +313,9 @@ class miaplpyTimeSeriesAnalysis(TimeSeriesAnalysis):
             a2=self.template['miaplpy.inversion.azimuthWindow'], a3=self.template['miaplpy.inversion.patchSize'])
 
         if sname == 'concatenate_patches':
-            command_line = '{a} phase_linking.py {b} --slc_stack {c} --concatenate\n'.format(
-                a=self.text_cmd.strip("'"), b=scp_args, c=slc_stack)
+            command_line = '{a} phase_linking.py {b} --slc_stack {c} --method {d} --concatenate\n'.format(
+                a=self.text_cmd.strip("'"), b=scp_args, c=slc_stack,
+                d=self.template['miaplpy.inversion.phaseLinkingMethod'])
 
             run_commands.append(command_line)
         else:
@@ -323,12 +323,13 @@ class miaplpyTimeSeriesAnalysis(TimeSeriesAnalysis):
             print('Number of tasks for step phase inversion: {}'.format(number_of_nodes))
 
             scp_args += ' --method {a1} --test {a2} --num_worker {a3} ' \
-                        '--mini_stack_size {a4} --time_lag {a5} --ps_num_shp {a6}'.format(
+                        '--mini_stack_size {a4} --time_lag {a5} --ps_num_shp {a6} --num_archived {a7}'.format(
                 a1=self.template['miaplpy.inversion.phaseLinkingMethod'],
                 a2=self.template['miaplpy.inversion.shpTest'],
                 a3=self.num_workers, a4=self.template['miaplpy.inversion.ministackSize'],
                 a5=self.template['miaplpy.inversion.sbw_connNum'],
-                a6=self.template['miaplpy.inversion.PsNumShp'])
+                a6=self.template['miaplpy.inversion.PsNumShp'],
+                a7=self.template['miaplpy.inversion.numArchived'])
 
             if not self.template['miaplpy.inversion.mask'] in [None, 'None']:
                 scp_args += ' --mask {}'.format(os.path.abspath(self.template['miaplpy.inversion.mask']))
@@ -368,17 +369,19 @@ class miaplpyTimeSeriesAnalysis(TimeSeriesAnalysis):
                          'delaunay': 'delaunay',
                          'sequential': 'sequential'}
 
+
         ifgram_dir = os.path.join(self.workDir, 'inverted/interferograms')
-        baseline_dir = self.template['miaplpy.load.baselineDir']
-        if not os.path.exists(baseline_dir):
-            baseline_dir = os.path.join(self.workDir, 'inputs/baselines')
+
+        if not self.template['miaplpy.load.processor'] == 'isce3':
+            baseline_dir = self.template['miaplpy.load.baselineDir']
+            if not os.path.exists(baseline_dir):
+                baseline_dir = os.path.join(self.workDir, 'inputs/baselines')
         short_baseline_ifgs = os.path.join(self.workDir, 'short_baseline_ifgs.txt')
 
         if not self.template['miaplpy.interferograms.list'] in [None, 'None', 'auto']:
             ifgram_dir = ifgram_dir + '_list'
         else:
             ifgram_dir = ifgram_dir + '_{}'.format(ifg_dir_names[self.template['miaplpy.interferograms.networkType']])
-
 
 
         if self.template['miaplpy.interferograms.referenceDate']:
@@ -439,8 +442,10 @@ class miaplpyTimeSeriesAnalysis(TimeSeriesAnalysis):
         for pair in pairs:
             ind1.append(self.date_list.index(pair[0]))
             ind2.append(self.date_list.index(pair[1]))
-        fb.plot_baselines(ind1=ind1, ind2=ind2, dates=self.date_list,
-                       baseline_dir=baseline_dir, out_dir=self.out_dir_network)
+
+        if not self.template['miaplpy.load.processor'] == 'isce3':
+            fb.plot_baselines(ind1=ind1, ind2=ind2, dates=self.date_list,
+                           baseline_dir=baseline_dir, out_dir=self.out_dir_network)
 
         if self.template['miaplpy.interferograms.list'] in [None, 'None', 'auto']:
             ifgdates = ['{}_{}\n'.format(self.date_list[g], self.date_list[h]) for g, h in zip(ind1, ind2)]
@@ -457,9 +462,11 @@ class miaplpyTimeSeriesAnalysis(TimeSeriesAnalysis):
         run_ifgs = os.path.join(self.run_dir, RUN_FILES[sname])
         print('Generate {}'.format(run_ifgs))
 
+        geo_file = glob.glob(os.path.join(self.workDir, 'inputs/geometry*.h5'))[0]
+
         #  command for generating unwrap mask
         cmd_generate_unwrap_mask = '{} generate_unwrap_mask.py --geometry {} '.format(
-            self.text_cmd.strip("'"), os.path.join(self.workDir, 'inputs/geometryRadar.h5'))
+            self.text_cmd.strip("'"), geo_file)
 
         if not self.template['miaplpy.unwrap.mask'] in ['None', None]:
             cmd_generate_unwrap_mask += '--mask {}'.format(self.template['miaplpy.unwrap.mask'])

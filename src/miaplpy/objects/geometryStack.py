@@ -20,6 +20,7 @@ from mintpy.objects import (DATA_TYPE_DICT,
                             GEOMETRY_DSET_NAMES,
                             IFGRAM_DSET_NAMES)
 from mintpy.utils import readfile, ptime, utils as ut, attribute as attr
+from mintpy.utils.utils0 import range_distance
 from mintpy.objects.stackDict import geometryDict as GDict, read_isce_bperp_file
 
 BOOL_ZERO = np.bool_(0)
@@ -28,6 +29,10 @@ FLOAT_ZERO = np.float32(0.0)
 CPX_ZERO = np.complex64(0.0)
 
 dataType = np.float32
+
+dsdict_isce3 = {'height':'z', 'xCoord':'x', 'yCoord':'y',
+          'incidenceAngle':'incidence',
+          'azimuthAngle':'heading', 'shadowMask':'layover_shadow_mask'}
 
 
 class geometryDict(GDict):
@@ -40,31 +45,47 @@ class geometryDict(GDict):
 
         # get extra metadata from geometry file if possible
         self.dsNames = list(self.datasetDict.keys())
+
         if not self.extraMetadata:
-            dsFile = self.datasetDict[self.dsNames[0]] 
-            metadata = read_attribute(dsFile.split('.xml')[0], metafile_ext='.rsc')
+            dsFile = self.datasetDict[self.dsNames[0]]
+            if processor == 'isce3':
+                metadata = read_attribute(os.path.dirname(dsFile) + '/data', metafile_ext='.rsc')
+            else:
+                metadata = read_attribute(dsFile.split('.xml')[0], metafile_ext='.rsc')
             #metadata = read_attribute(dsFile, metafile_ext='.rsc')
             if all(i in metadata.keys() for i in ['STARTING_RANGE', 'RANGE_PIXEL_SIZE']):
                 self.extraMetadata = metadata
 
-    def read(self, family, box=None): #, xstep=1, ystep=1):
-        #super().read(family, box, xstep=xstep, ystep=ystep)
+    def read(self, family, box=None, dtype='float32'):
         if self.file.endswith('.h5'):
             dsName = None
         else:
             dsName = family
-        self.file = self.datasetDict[family].split('.xml')[0]
-        data, metadata = read_geo(self.file,
-                                  datasetName=dsName,
-                                 box=box)
+
+        if os.path.basename(self.file) == 'topo.h5':
+            metadata = read_attribute(os.path.dirname(self.file) + '/data', metafile_ext='.rsc')
+            metadata['FILE_TYPE'] = 'geometry'
+            with h5py.File(self.file, 'r') as gds:
+                data = gds[dsdict_isce3[family]][box[1]:box[3], box[0]:box[2]]
+
+        else:
+            self.file = self.datasetDict[family].split('.xml')[0]
+            data, metadata = read_geo(self.file,
+                                      datasetName=dsName,
+                                      box=box,
+                                      data_type=dtype)
         return data, metadata
     
     def get_size(self, family=None, box=None, xstep=1, ystep=1):
         if not family:
             family = [i for i in self.datasetDict.keys() if i != 'bperp'][0]
         self.file = self.datasetDict[family]
-        metadata = read_attribute(self.file.split('.xml')[0], metafile_ext='.rsc')
-        #metadata = read_attribute(self.file, metafile_ext='.rsc')
+        if self.file.endswith('.h5'):
+            metadata = self.extraMetadata
+            metadata['FILE_TYPE'] = 'geometry'
+        else:
+            metadata = read_attribute(self.file.split('.xml')[0], metafile_ext='.rsc')
+        # metadata = read_attribute(self.file, metafile_ext='.rsc')
         # update due to subset
         if box:
             length = box[3] - box[1]
@@ -86,7 +107,11 @@ class geometryDict(GDict):
         if not family:
             family = [i for i in self.datasetDict.keys() if i != 'bperp'][0]
         self.file = self.datasetDict[family]
-        self.metadata = read_attribute(self.file.split('.xml')[0], metafile_ext='.rsc')
+        
+        if os.path.basename(self.file) == 'topo.h5':
+            self.metadata = read_attribute(os.path.dirname(self.file) + '/data', metafile_ext='.rsc')
+        else:
+            self.metadata = read_attribute(self.file.split('.xml')[0], metafile_ext='.rsc')
         #self.metadata = read_attribute(self.file, metafile_ext='.rsc')
         self.length = int(self.metadata['LENGTH'])
         self.width = int(self.metadata['WIDTH'])
@@ -119,6 +144,8 @@ class geometryDict(GDict):
         /height                  2D array of float32 in size of (l, w   ) in meter.
         /latitude (azimuthCoord) 2D array of float32 in size of (l, w   ) in degree.
         /longitude (rangeCoord)  2D array of float32 in size of (l, w   ) in degree.
+        /yCoord (azimuthCoord)   2D array of float32 in size of (l, w   ) in meter.
+        /xCoord (rangeCoord)     2D array of float32 in size of (l, w   ) in meter.
         /incidenceAngle          2D array of float32 in size of (l, w   ) in degree.
         /slantRangeDistance      2D array of float32 in size of (l, w   ) in meter.
         /azimuthAngle            2D array of float32 in size of (l, w   ) in degree. (optional)
@@ -193,7 +220,7 @@ class geometryDict(GDict):
 
             # 2D datasets containing height, latitude, incidenceAngle, shadowMask, etc.
             else:
-                dsDataType = dataType
+                dsDataType = 'float32' #dataType
                 if dsName.lower().endswith('mask'):
                     dsDataType = np.bool_
                 dsShape = (length, width)
@@ -203,8 +230,8 @@ class geometryDict(GDict):
                                                          t=str(dsDataType),
                                                          s=dsShape,
                                                          c=str(compression)))
-
-                data = np.array(self.read(family=dsName, box=box)[0], dtype=dsDataType)
+                #import pdb; pdb.set_trace()
+                data = np.array(self.read(family=dsName, box=box, dtype=dsDataType)[0], dtype=dsDataType)
                 if not dsName in f.keys():
                     ds = f.create_dataset(dsName,
                                           data=data,
@@ -220,7 +247,15 @@ class geometryDict(GDict):
             if dsName == 'incidenceAngle':
                 data = self.get_incidence_angle(box=box, xstep=xstep, ystep=ystep)
             elif dsName == 'slantRangeDistance':
-                data = self.get_slant_range_distance(box=box, xstep=xstep, ystep=ystep)
+                if self.processor == 'isce3':
+                    key = 'SLANT_RANGE_DISTANCE'
+                    print(f'geocoded input, use contant value from metadata {key}')
+                    length = int(self.extraMetadata['LENGTH'])
+                    width = int(self.extraMetadata['WIDTH'])
+                    range_dist = range_distance(self.extraMetadata, dimension=2, print_msg=False)
+                    data = np.ones((length, width), dtype=np.float32) * range_dist
+                else:
+                    data = self.get_slant_range_distance(box=box, xstep=xstep, ystep=ystep)
 
             # Write dataset
             if data is not None:

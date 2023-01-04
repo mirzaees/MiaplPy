@@ -59,7 +59,7 @@ cdef class CPhaseLink:
         self.patch_size = np.int32(inps.patch_size)
         self.ps_shp = np.int32(inps.ps_shp)
         self.out_dir = self.work_dir + b'/inverted'
-        #self.num_archived = np.int32(inps.num_archived)
+        self.num_archived = np.int32(inps.num_archived)
         os.makedirs(self.out_dir.decode('UTF-8'), exist_ok='True')
         self.slcStackObj = slcStack(inps.slc_stack)
         self.metadata = self.slcStackObj.get_metadata()
@@ -216,7 +216,7 @@ cdef class CPhaseLink:
                                     maxshape=(None, self.length, self.width),
                                     chunks=True,
                                     dtype=np.float32)
-                '''
+                
                 if b'real_time' == self.phase_linking_method[0:9]:
                     RSLC.create_dataset('phase_seq',
                                         shape=(self.n_image, self.length, self.width),
@@ -229,7 +229,7 @@ cdef class CPhaseLink:
                                         maxshape=(None, self.length, self.width),
                                         chunks=True,
                                         dtype=np.float32)
-                '''
+
                 RSLC.create_dataset('shp',
                                     shape=(self.length, self.width),
                                     maxshape=(self.length, self.width),
@@ -288,8 +288,8 @@ cdef class CPhaseLink:
                                      total_num_mini_stacks=self.total_num_mini_stacks,
                                      default_mini_stack_size=self.mini_stack_default_size, ps_shp=self.ps_shp,
                                      shp_test=self.shp_test, out_dir=self.out_dir, time_lag=self.time_lag,
-                                     mask_file=self.mask_file)
-        #"num_archived": self.num_archived,
+                                     mask_file=self.mask_file, num_archived=self.num_archived)
+        
         return data_kwargs
 
 
@@ -314,17 +314,6 @@ cdef class CPhaseLink:
 
         create_grid_mapping(group=fhandle, crs=projection, gt=list(geotransform))
 
-        #if "georeference" in fhandle:
-        #    grp = fhandle["georeference"]
-        #else:
-        #    grp = fhandle.create_group("georeference")
-
-        #if not "transform" in grp.keys():
-        #    grp.create_dataset("transform", data=geotransform, dtype=np.float32)
-        #grp.attrs["crs"] = projection
-        #grp.attrs["extent"] = crop_extent
-        #grp.attrs["pixel_size_x"] = self.pixel_width
-        #grp.attrs["pixel_size_y"] = self.pixel_height
         return
 
     def set_projection_gdal1_int(self, cnp.ndarray[int, ndim=2] data, int bands, bytes output, str description,
@@ -395,7 +384,7 @@ cdef class CPhaseLink:
         cdef float complex[:, :, ::1] rslc_ref, rslc_ref_seq
         cdef cnp.ndarray[float, ndim=3] temp_coh, ps_prod, eig_values = np.zeros((3, self.length, self.width), dtype=np.float32)
         cdef cnp.ndarray[float, ndim=2] amp_disp = np.zeros((self.length, self.width), dtype=np.float32)
-        #cdef cnp.ndarray[int, ndim=2] reference_index_map = np.zeros((self.length, self.width), dtype=np.int32)
+        cdef cnp.ndarray[int, ndim=2] reference_index_map = np.zeros((self.length, self.width), dtype=np.int32)
         cdef list geotransform
 
         if os.path.exists(self.RSLCfile.decode('UTF-8')):
@@ -427,9 +416,9 @@ cdef class CPhaseLink:
                 shp = np.load(patch_dir.decode('UTF-8') + '/shp.npy', allow_pickle=True)
                 mask_ps = np.load(patch_dir.decode('UTF-8') + '/mask_ps.npy', allow_pickle=True)
                 ps_prod = np.load(patch_dir.decode('UTF-8') + '/ps_products.npy', allow_pickle=True)
-                #reference_index = np.load(patch_dir.decode('UTF-8') + '/reference_index.npy', allow_pickle=True)
-                #if b'real_time' == self.phase_linking_method[0:9]:
-                #    rslc_ref_seq = np.load(patch_dir.decode('UTF-8') + '/phase_ref_seq.npy', allow_pickle=True)
+                reference_index = np.load(patch_dir.decode('UTF-8') + '/reference_index.npy', allow_pickle=True)
+                if b'real_time' == self.phase_linking_method[0:9]:
+                    rslc_ref_seq = np.load(patch_dir.decode('UTF-8') + '/phase_ref_seq.npy', allow_pickle=True)
 
                 temp_coh[temp_coh<0] = 0
 
@@ -441,15 +430,15 @@ cdef class CPhaseLink:
                 ## write_hdf5_block_3D(fhandle, rslc_ref, b'slc', block)
                 write_hdf5_block_3D(fhandle, np.angle(rslc_ref), b'phase', block)
                 write_hdf5_block_3D(fhandle, np.abs(rslc_ref), b'amplitude', block)
-                #if b'real_time' == self.phase_linking_method[0:9]:
-                #    write_hdf5_block_3D(fhandle, np.angle(rslc_ref_seq), b'phase_seq', block)
-                #    write_hdf5_block_3D(fhandle, np.abs(rslc_ref_seq), b'amplitude_seq', block)
+                if b'real_time' == self.phase_linking_method[0:9]:
+                    write_hdf5_block_3D(fhandle, np.angle(rslc_ref_seq), b'phase_seq', block)
+                    write_hdf5_block_3D(fhandle, np.abs(rslc_ref_seq), b'amplitude_seq', block)
 
                 # SHP - 2D
                 block = [box[1], box[3], box[0], box[2]]
                 write_hdf5_block_2D_int(fhandle, shp, b'shp', block)
                 amp_disp[block[0]:block[1], block[2]:block[3]] = ps_prod[0, :, :]
-                #reference_index_map[block[0]:block[1], block[2]:block[3]] = reference_index[:, :]
+                reference_index_map[block[0]:block[1], block[2]:block[3]] = reference_index[:, :]
 
                 # temporal coherence - 3D
                 block = [0, 2, box[1], box[3], box[0], box[2]]
@@ -475,9 +464,9 @@ cdef class CPhaseLink:
             temp_coh_file = self.out_dir + b'/tempCoh_full'
             self.set_projection_gdal1(fhandle['temporalCoherence'][1, :, :], 1,
                                       temp_coh_file, 'Temporal coherence full', projection, geotransform)
-            #ref_index_file = self.out_dir + b'/reference_index'
-            #self.set_projection_gdal1_int(reference_index_map, 1,
-            #                          ref_index_file, 'Reference index map', projection, geotransform)
+            ref_index_file = self.out_dir + b'/reference_index'
+            self.set_projection_gdal1_int(reference_index_map, 1,
+                                      ref_index_file, 'Reference index map', projection, geotransform)
 
 
 

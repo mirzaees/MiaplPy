@@ -85,7 +85,6 @@ def load_product(xmlname):
     obj = pm.loadProduct(xmlname)
     return obj
 
-
 def extract_multilook_number(geom_dir, metadata=dict()):
 
     for fbase in ['hgt','lat','lon','los']:
@@ -385,7 +384,7 @@ def main(iargs=None):
                                                  beam_mode=metadata['beam_mode'])
     '''
 
-    # prepare metadata for ifgram file
+    # prepare metadata for slc file
     if inps.slcDir and inps.slcFiles:
         for namePattern in inps.slcFiles:
             prepare_stack(inps.slcDir, namePattern,

@@ -10,7 +10,7 @@ cdef class CPhaseLink:
     cdef object inps, slcStackObj
     cdef bytes work_dir, phase_linking_method, shp_test
     cdef bytes slc_stack, RSLCfile
-    cdef int range_window, azimuth_window, patch_size, n_image, width, length
+    cdef int range_window, azimuth_window, patch_size, n_image, width, length, num_archived
     cdef int shp_size, mini_stack_default_size, num_box, total_num_mini_stacks
     cdef float distance_thresh
     cdef bint sequential

@@ -19,9 +19,11 @@ from pyproj.transformer import Transformer
 from mintpy.utils import ptime, attribute as attr
 from miaplpy.objects.utils import read_attribute
 import time
-#import rioxarray
-#import isce3
+import rioxarray
+import isce3
 from typing import Optional, Any
+# from compass.utils.h5_helpers import Meta, add_dataset_and_attrs
+
 
 from mintpy.objects import (DATA_TYPE_DICT,
                             GEOMETRY_DSET_NAMES,
@@ -212,7 +214,6 @@ def bbox_to_utm(bbox, epsg_dst, epsg_src=4326):
     xys = list(zip(xt, yt))
     return *xys[0], *xys[1]
 
-
 class cropSLC:
     def __init__(self, pairs_dict: Optional[List[Path]] = None,
                  geo_bbox: Optional[Tuple[float, float, float, float]] = None):
@@ -233,7 +234,6 @@ class cropSLC:
         self.lengthc, self.widthc = self.get_size()
 
     def get_transform(self, src_file):
-        import pdb; pdb.set_trace()
         with h5py.File(src_file, 'r') as ds:
             dsg = ds['data']['projection'].attrs
             xcoord = ds['data']['x_coordinates'][()]

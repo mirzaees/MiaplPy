@@ -16,11 +16,14 @@ def enablePrint():
 
 blockPrint()
 import datetime
-import isceobj
+#import isceobj
 import numpy as np
 from miaplpy.objects.arg_parser import MiaplPyParser
 import h5py
 from math import sqrt, exp
+from osgeo import gdal
+import rioxarray
+import dask.array as da
 
 enablePrint()
 
@@ -47,6 +50,10 @@ def main(iargs=None):
     print(inps.out_dir)
     os.makedirs(inps.out_dir, exist_ok=True)
 
+    ifg_file_name = run_interferogram(inps)
+    run_coherence(ifg_file_name)
+
+    '''
     resampName = inps.out_dir + '/fine'
     resampInt = resampName + '.int'
     filtInt = os.path.dirname(resampInt) + '/filt_fine.int'
@@ -62,11 +69,80 @@ def main(iargs=None):
 
     estCoherence(filtInt, cor_file)
     #run_interpolation(filtInt, inps.stack_file, length, width)
+    '''
+    return
 
+def write_projection(src_file: Filename, dst_file: Filename) -> None:
+    with h5py.File(src_file, 'r') as ds:
+        projection = ds.attrs["spatial_ref"].decode('utf-8')
+        geotransform = d['georeference']['transform'][()]
+        #extent = ds['georeference'].attrs['extent']
+        nodata = np.nan
+
+    ds_dst = gdal.Open(os.fspath(dst_file), gdal.GA_Update)
+    ds_dst.SetGeoTransform(geotransform)
+    ds_dst.SetProjection(projection)
+    ds_dst.GetRasterBand(1).SetNoDataValue(nodata)
+    ds_src = ds_dst = None
+    return
+
+def run_interferogram(inps):
+    # sequential = True
+    sequential = False
+    out_file = inps.out_dir + '.tif'
+    dask_chunks = (128 * 10, 128 * 10)
+
+    # sequential interferograms
+    with h5py.File(inps.stack_file, 'r') as ds:
+        if 'spatial_ref' in ds.attrs:
+            projection = ds.attrs["spatial_ref"].decode('utf-8')
+        else:
+            prpjection = 'None'
+        date_list = np.array([x.decode('UTF-8') for x in ds['date'][:]])
+        ref_ind = np.where(date_list == inps.reference)[0][0]
+        sec_ind = np.where(date_list == inps.secondary)[0][0]
+        phase_series = ds['phase_seq']
+        amplitudes = ds['amplitude_seq']
+        ref_phase = da.from_array(phase_series[ref_ind, :, :], chunks=dask_chunks)
+        sec_phase = da.from_array(phase_series[sec_ind, :, :], chunks=dask_chunks)
+        ref_amplitude = da.from_array(amplitudes[ref_ind, :, :], chunks=dask_chunks)
+        sec_amplitude = da.from_array(amplitudes[sec_ind, :, :], chunks=dask_chunks)
+        denom = np.sqrt(ref_amplitude**2 * sec_amplitude**2)
+        if sequential:
+            if ref_ind - sec_ind == 1:
+                numer = ref_amplitude * np.exp(1j * ref_phase)
+            if ref_ind - sec_ind == -1:
+                numer = sec_amplitude * np.exp(-1j * sec_phase)
+            if (ref_ind - sec_ind) > 1:
+                phase = ref_phase + sec_phase
+                for ti in range(sec_ind + 1, ref_ind):
+                    sec_phase = da.from_array(phase_series[ti, :, :], chunks=dask_chunks)
+                    phase += sec_phase
+                numer = (ref_amplitude * sec_amplitude) * np.exp(1j * phase)
+            if (ref_ind - sec_ind) < 1:
+                phase = ref_phase + sec_phase
+                for ti in range(ref_ind + 1, sec_ind):
+                    sec_phase = da.from_array(phase_series[ti, :, :], chunks=dask_chunks)
+                    phase += sec_phase
+                numer = (ref_amplitude * sec_amplitude) * np.exp(-1j * phase)
+        else:
+            numer = (ref_amplitude * sec_amplitude) * np.exp(1j * (ref_phase - sec_phase))
+
+    ifg = (numer / denom).astype("complex64")
+    # Make sure we didn't lose the geo information
+    ifg.rio.write_crs(projection, inplace=True)
+    ifg.rio.write_nodata(float("NaN"), inplace=True)
+    ifg.rio.to_raster(out_file, tiled=True)
+    return out_file
+
+def run_coherence(ifg_filename):
+    outfile = ifg_filename.split('.')[0] + '_cor.tif'
+    da_ifg = rioxarray.open_rasterio(ifg_filename, chunks=True)
+    np.abs(da_ifg).rio.to_raster(outfile, driver="GTiff", suffix="add")
     return
 
 
-def run_interferogram(inps, resampName):
+def run_interferogram_old(inps, resampName):
     if inps.azlooks * inps.rglooks > 1:
         extention = '.ml.slc'
     else:

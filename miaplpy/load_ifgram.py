@@ -344,7 +344,7 @@ def prepare_metadata(inpsDict):
         except:
             pass
     elif processor == 'isce3':
-        meta_dir = os.path.dirname(sorted(glob.glob(os.path.dirname(inpsDict['miaplpy.load.slcFile'])+'/topo.h5'))[0])
+        meta_dir = os.path.dirname(sorted(glob.glob(os.path.dirname(inpsDict['miaplpy.load.slcFile'])+'/static_layers_*.h5'))[0])
         meta_file = meta_dir + '/data.src'
         slc_files = inpsDict['miaplpy.load.slcFile']
         # observation

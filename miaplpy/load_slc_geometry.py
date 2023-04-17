@@ -7,6 +7,7 @@ import os
 import glob
 import sys
 import datetime
+import h5py
 from mintpy.objects import (geometry,
                             sensor)
 from miaplpy.objects.slcStack import slcStack
@@ -81,7 +82,6 @@ def main(iargs=None):
     if not inps.no_metadata_check:
         mut.prepare_metadata(iDict)
 
-
     # skip data writing for aria and isce3 as it is included in prep_aria and prep_isce3
     if iDict['processor'] in ['aria']:
         return
@@ -117,13 +117,25 @@ def main(iargs=None):
     if stackObj and mld.run_or_skip(inps.out_file[0], stackObj, box, updateMode=updateMode,
                                       xstep=iDict['xstep'], ystep=iDict['ystep']):
         print('-' * 50)
-        stackObj.write2hdf5(outputFile=inps.out_file[0],
-                            access_mode='a',
-                            box=box,
-                            xstep=iDict['xstep'],
-                            ystep=iDict['ystep'],
-                            compression=comp,
-                            extra_metadata=extraDict)
+        if iDict['processor']=='isce3':
+            isce3_run_or_skip = 'run'
+            if os.path.exists(inps.out_file[0]):
+                with h5py.File(inps.out_file[0], 'r') as f:
+                    if 'MODIFICATION_TIME' in f.attrs:
+                        isce3_run_or_skip = 'skip'
+            if isce3_run_or_skip == 'run':
+                stackObj.write2hdf5(outputFile=inps.out_file[0],
+                                    access_mode='a',
+                                    compression=comp,
+                                    extra_metadata=extraDict)
+        else:
+            stackObj.write2hdf5(outputFile=inps.out_file[0],
+                                access_mode='a',
+                                box=box,
+                                xstep=iDict['xstep'],
+                                ystep=iDict['ystep'],
+                                compression=comp,
+                                extra_metadata=extraDict)
 
     if geomRadarObj and mld.run_or_skip(inps.out_file[1], geomRadarObj, box, updateMode=updateMode,
                                           xstep=iDict['xstep'], ystep=iDict['ystep']):

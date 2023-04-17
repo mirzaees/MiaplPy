@@ -11,6 +11,9 @@ import h5py
 from osgeo import gdal
 import datetime
 import re
+from pyproj import CRS
+from compass.utils.helpers import bbox_to_utm
+import netCDF4
 import numpy as np
 from miaplpy.objects.arg_parser import MiaplPyParser
 from mintpy.utils import readfile, ptime, utils as ut
@@ -209,9 +212,10 @@ def read_attribute(fname, datasetName=None, standardize=True, metafile_ext=None)
                     standardize : bool, grab standardized metadata key name
         Returns:    atr : dict, attributes dictionary
         """
+
     fbase, fext = os.path.splitext(os.path.basename(fname))
     fext = fext.lower()
-    if metafile_ext is None:
+    if metafile_ext is None or fbase.startswith('static'):
         test_file = fname
     else:
         test_file = fname + metafile_ext
@@ -329,6 +333,8 @@ def read_attribute(fname, datasetName=None, standardize=True, metafile_ext=None)
             fname + '.vrt',
             fname + '.aux.xml',
         ]
+        if fname.endswith('.rsc'):
+            metafiles += [fname.split('.rsc')[-2] + '.rsc']
         metafiles = [i for i in metafiles if os.path.isfile(i)]
         if len(metafiles) == 0:
             raise FileNotFoundError('No metadata file found for data file: {}'.format(fname))
@@ -553,7 +559,9 @@ def read(fname, box=None, datasetName=None, data_type=np.float32, print_msg=True
     elif isinstance(datasetName, str):
         dsname4atr = datasetName.split('-')[0]
 
-    files = [fname + i for i in ['.rsc', '.xml']]
+    files = [fname + i for i in ['.rsc', '.xml']] #+ [os.path.dirname(fname) + '/data.rsc']
+    import pdb; pdb.set_trace()
+    #fname0 = [fi for fi in files if os.path.exists(fi)][0]
     fext0 = ['.' + i.split('.')[-1] for i in files if os.path.exists(i)][0]
 
     atr = read_attribute(fname, datasetName=dsname4atr, metafile_ext=fext0)
@@ -1102,7 +1110,7 @@ def read_subset_template2box(template_file):
 
     # subset.yx -> pix_box
     try:
-        opts = [i.strip().replace('[','').replace(']','') for i in tmpl[key_yx].split(',')]
+        opts = [i.strip().replace('[', '').replace(']','') for i in tmpl[key_yx].split(',')]
         y0, y1 = sorted([int(i.strip()) for i in opts[0].split(':')])
         x0, x1 = sorted([int(i.strip()) for i in opts[1].split(':')])
         pix_box = (x0, y0, x1, y1)
@@ -1120,36 +1128,53 @@ def read_subset_box(inpsDict):
     inpsDict['box'] = None
     inpsDict['box4geo_lut'] = None
     pix_box, geo_box = read_subset_template2box(inpsDict['template_file'][0])
-    #pix_box, geo_box = subset.read_subset_template2box(inpsDict['template_file'][0])
 
     if inpsDict['processor'] == 'isce3':
-        meta_dir = os.path.dirname(sorted(glob.glob(os.path.dirname(inpsDict['miaplpy.load.slcFile'])+'/topo.h5'))[0])
-        metadata = read_attribute(meta_dir + '/data', metafile_ext='.rsc')
+        src_file = sorted(glob.glob(os.path.dirname(inpsDict['miaplpy.load.slcFile']) + '/static_layers*.h5'))[0]
+        metadata = read_attribute(src_file.split('.')[-2] + '.rsc', metafile_ext='.rsc')
+        with h5py.File(src_file, 'r') as f:
+            dsg = f['science']['SENTINEL1']['CSLC']['grids']['static_layers']['projection'].attrs
+            crs = CRS.from_wkt(dsg['spatial_ref'].decode("utf-8"))
+            XX = f['science']['SENTINEL1']['CSLC']['grids']['static_layers']['x_coordinates'][()]
+            YY = f['science']['SENTINEL1']['CSLC']['grids']['static_layers']['y_coordinates'][()]
+            ds = f['science']['SENTINEL1']['CSLC']['grids']['static_layers']['x'][()]
+            ymax, xmax = ds.shape
+            xmin, ymin = 0, 0
+            x_origin = XX[0]
+            y_origin = YY[-1]
+            pixel_width = float(f['science']['SENTINEL1']['CSLC']['grids']['static_layers']['x_spacing'][()])
+            pixel_height = float(f['science']['SENTINEL1']['CSLC']['grids']['static_layers']['y_spacing'][()])
+            gt = (x_origin, pixel_width, 0, y_origin, 0, pixel_height)
+
         if geo_box is not None:
-            from pyproj.transformer import Transformer
-            geogrid_dict = eval(metadata['geogrid'])
-            epsg_dest = geogrid_dict['epsg']
-            epsg_src = 4326
-            t = Transformer.from_crs(epsg_src, epsg_dest, always_xy=True)
+            geo_box = (geo_box[0], geo_box[3], geo_box[2], geo_box[1])
+            bb_utm = bbox_to_utm(geo_box, epsg_src=4326, epsg_dst=crs.to_epsg())
+            xmin = abs(int((bb_utm[0] - gt[0]) / gt[1]))
+            xmax = abs(int((bb_utm[2] - gt[0]) / gt[1]))
+            ymin = abs(int((bb_utm[1] - gt[3]) / gt[5]))
+            ymax = abs(int((bb_utm[3] - gt[3]) / gt[5]))
 
-            xmin, ymin, xmax, ymax = geo_box[0], geo_box[3], geo_box[2], geo_box[1]
-            xs, ys = np.array([(xmin, ymin), (xmax, ymax)]).T
-            xt, yt = t.transform(xs, ys)
+            if ymax > ds.shape[0]:
+                ymax = ds.shape[0]
+                bb_utm3 = ymax * gt[5] + gt[3]
+                bb_utm = (bb_utm[0], bb_utm[1], bb_utm[2], bb_utm3)
 
-            x0 = int((xt[0] - geogrid_dict['start_x'])/geogrid_dict['spacing_x'])
-            if x0 < 0:
-                x0 = 0
-            x1 = int((xt[1] - geogrid_dict['start_x']) / geogrid_dict['spacing_x'])
-            if x1 > geogrid_dict['width']:
-                x1 = geogrid_dict['width']
-            y0 = int((yt[0] - geogrid_dict['start_y']) / geogrid_dict['spacing_y'])
-            if y0 < 0:
-                y0 = 0
-            y1 = int((yt[1] - geogrid_dict['start_y']) / geogrid_dict['spacing_y'])
-            if y1 > geogrid_dict['length']:
-                y1 = geogrid_dict['length']
+            if xmax > ds.shape[1]:
+                xmax = ds.shape[1]
+                bb_utm2 = xmax * gt[1] + gt[0]
+                bb_utm = (bb_utm[0], bb_utm[1], bb_utm2, bb_utm[3])
 
-            pix_box = [x0, y0, x1, y1]
+            if ymin < 0:
+                ymin = 0
+                bb_utm1 = gt[3]
+                bb_utm = (bb_utm[0], bb_utm1, bb_utm[2], bb_utm[3])
+
+            if xmin < 0:
+                xmin = 0
+                bb_utm0 = gt[0]
+                bb_utm = (bb_utm0, bb_utm[1], bb_utm[2], bb_utm[3])
+
+        pix_box = [xmin, ymin, xmax, ymax]
         
         pathKey = [i for i in datasetName2templateKey.values()
                    if i in inpsDict.keys()][0]
@@ -1229,6 +1254,7 @@ def read_subset_box(inpsDict):
         pix_box = (0, 0, int(metadata['WIDTH']), int(metadata['LENGTH']))
 
     inpsDict['box'] = pix_box
+    inpsDict['geo_box'] = geo_box
 
     return inpsDict
 
@@ -1400,10 +1426,11 @@ def prepare_metadata(inpsDict):
         geo_files = ['miaplpy.load.demFile', 'miaplpy.load.lookupYFile', 'miaplpy.load.lookupXFile',
                      'miaplpy.load.incAngleFile', 'miaplpy.load.azAngleFile', 'miaplpy.load.shadowMaskFile']
         geom_dir = [os.path.dirname(inpsDict[gfile]) for gfile in geo_files if inpsDict[gfile] is not 'auto'][0]
-        cmd = '{s} -s {i} -f {f} -g {g}'.format(s=script_name,
-                                                i=slc_dir,
-                                                f=slc_file,
-                                                g=geom_dir)
+        cmd = '{s} -t {t} -s {i} -f {f} -g {g}'.format(s=script_name,
+                                                       t=inpsDict['template_file'][0],
+                                                       i=slc_dir,
+                                                       f=slc_file,
+                                                       g=geom_dir)
 
         print(cmd)
         os.system(cmd)
@@ -1592,7 +1619,11 @@ def read_inps_dict2slc_stack_dict_object(inpsDict):
             pairsDict[dates] = slcObj
 
     if len(pairsDict) > 0:
-        stackObj = slcStackDict(pairsDict=pairsDict)
+        if inpsDict['processor'] == 'isce3':
+            from miaplpy.objects.crop_geo import cropSLC
+            stackObj = cropSLC(pairs_dict=pairsDict, geo_bbox=inpsDict['geo_box'])
+        else:
+            stackObj = slcStackDict(pairsDict=pairsDict)
     else:
         stackObj = None
     return stackObj

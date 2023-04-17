@@ -13,6 +13,8 @@ import numpy as np
 from datetime import datetime
 import argparse
 import glob
+from pyproj import CRS
+from compass.utils.helpers import bbox_to_utm
 
 try:
     from osgeo import gdal
@@ -45,6 +47,8 @@ def create_parser():
     parser = argparse.ArgumentParser(description='Prepare ISCE metadata files.',
                                      formatter_class=argparse.RawTextHelpFormatter,
                                      epilog=EXAMPLE)
+    parser.add_argument('-t', '--template', type=str, nargs='+',
+                        dest='template_file', help='Template file with path info.')
     parser.add_argument('-s', '--slc-dir', dest='slcDir', type=str, default=None,
                         help='The directory which contains all SLCs\n'+
                              'e.g.: $PROJECT_DIR/merged/SLC')
@@ -142,15 +146,48 @@ def read_subset_box(template_file, meta):
     """
 
     if template_file and os.path.isfile(template_file):
-
         # read subset info from template file
-        pix_box, geo_box = read_subset_template2box(template_file)
+        pix_box, geo_box = mut.read_subset_template2box(template_file)
+        crs = CRS.from_wkt(meta['spatial_ref'].decode("utf-8"))
+        x_origin = float(meta["X_FIRST"])
+        y_origin = float(meta["Y_FIRST"])
+        pixel_width = float(meta["X_STEP"])
+        pixel_height = float(meta["Y_STEP"])
+        gt = (x_origin, pixel_width, 0, y_origin, 0, pixel_height)
 
         # geo_box --> pix_box
         if geo_box is not None:
-            coord = ut.coordinate(meta)
-            pix_box = coord.bbox_geo2radar(geo_box)
-            pix_box = coord.check_box_within_data_coverage(pix_box)
+            geo_box = (geo_box[0], geo_box[3], geo_box[2], geo_box[1])
+            bb_utm = bbox_to_utm(geo_box, epsg_src=4326, epsg_dst=crs.to_epsg())
+            xmin = abs(int((bb_utm[0] - gt[0]) / gt[1]))
+            xmax = abs(int((bb_utm[2] - gt[0]) / gt[1]))
+            ymin = abs(int((bb_utm[1] - gt[3]) / gt[5]))
+            ymax = abs(int((bb_utm[3] - gt[3]) / gt[5]))
+
+            if ymax > meta['LENGTH']:
+                ymax = meta['LENGTH']
+                bb_utm3 = ymax * gt[5] + gt[3]
+                bb_utm = (bb_utm[0], bb_utm[1], bb_utm[2], bb_utm3)
+
+            if xmax > meta['WIDTH']:
+                xmax = meta['WIDTH']
+                bb_utm2 = xmax * gt[1] + gt[0]
+                bb_utm = (bb_utm[0], bb_utm[1], bb_utm2, bb_utm[3])
+
+            if xmin < 0:
+                xmin = 0
+                bb_utm0 = gt[0]
+                bb_utm = (bb_utm0, bb_utm[1], bb_utm[2], bb_utm[3])
+
+            if ymin < 0:
+                ymin = 0
+                bb_utm1 = gt[3]
+                bb_utm = (bb_utm[0], bb_utm1, bb_utm[2], bb_utm[3])
+
+            pix_box = (xmin, ymin, xmax, ymax)
+            #coord = ut.coordinate(meta)
+            #pix_box = coord.bbox_geo2radar(geo_box)
+            #pix_box = coord.check_box_within_data_coverage(pix_box)
             print(f'input bounding box in lalo: {geo_box}')
 
     else:
@@ -174,27 +211,34 @@ def extract_metadata(h5_file):
     """Extract ISCE3 metadata for MiaplPy."""
     meta = {}
 
-
     with h5py.File(h5_file, 'r') as ds:
-        metadata = ds['metadata']
-        meta['LENGTH'] = metadata['processing']['length'][()]
-        meta['WAVELENGTH'] = float(metadata['s1ab_burst_metadata']['wavelength'][()])
-        meta['WIDTH'] = metadata['processing']['width'][()]
+        dsg = ds['science']['SENTINEL1']['CSLC']['grids']['static_layers']['projection'].attrs
+        meta['spatial_ref'] = dsg['spatial_ref']
+        metadata = ds['science']['SENTINEL1']['CSLC']['metadata']
+        grids = ds['science']['SENTINEL1']['CSLC']['grids']
+        meta['POLARIZATION'] = metadata['processing_information']['s1_burst_metadata']['polarization'][()].decode('utf-8')
+        meta['LENGTH'] = grids['static_layers']['x'].shape[0]
+        meta['WIDTH'] = grids['static_layers']['x'].shape[1]
+        #meta['LENGTH'] = metadata['processing_information']['s1_burst_metadata']['shape'][()][0]
+        meta['WAVELENGTH'] = float(metadata['processing_information']['s1_burst_metadata']['wavelength'][()])
+        #meta['WIDTH'] = metadata['processing_information']['s1_burst_metadata']['shape'][()][1]
         meta["ORBIT_DIRECTION"] = metadata['orbit']['orbit_direction'][()].decode('utf-8')
-        meta['POLARIZATION'] = metadata['s1ab_burst_metadata']['polarization'][()].decode('utf-8')
-        meta["STARTING_RANGE"] = float(metadata['s1ab_burst_metadata']['starting_range'][()])
-        meta["RANGE_PIXEL_SIZE"] = metadata['s1ab_burst_metadata']['range_pixel_spacing'][()]
-        x_step = float(metadata['processing']['x_posting'][()])
-        y_step = float(metadata['processing']['y_posting'][()])
-        x_first = float(metadata['processing']['start_x'][()])
-        y_first = float(metadata['processing']['start_y'][()])
-        datestr = metadata['orbit']['ref_epoch'][()].decode("utf-8")
+
+        meta["STARTING_RANGE"] = float(metadata['processing_information']['s1_burst_metadata']['starting_range'][()])
+        meta["RANGE_PIXEL_SIZE"] = metadata['processing_information']['s1_burst_metadata']['range_pixel_spacing'][()]
+        x_step = float(grids['static_layers']['x_spacing'][()])
+        y_step = float(grids['static_layers']['y_spacing'][()])
+        x_first = float(grids['static_layers']['x_coordinates'][()][0])
+        y_first = float(grids['static_layers']['y_coordinates'][()][-1])
+        datestr = metadata['orbit']['reference_epoch'][()].decode("utf-8")
         utc = datetime.strptime(datestr[0:-3], '%Y-%m-%d %H:%M:%S.%f')
         meta["CENTER_LINE_UTC"] = utc.hour * 3600.0 + utc.minute * 60.0 + utc.second + utc.microsecond * (1e-6)  # Starting line in fact
-        S = min(ds['SLC']['y'][:])
-        N = max(ds['SLC']['y'][:])
-        E = min(ds['SLC']['x'][:])
-        W = max(ds['SLC']['x'][:])
+        S = min(grids['static_layers']['y_coordinates'][:])
+        N = max(grids['static_layers']['y_coordinates'][:])
+        E = min(grids['static_layers']['x_coordinates'][:])
+        W = max(grids['static_layers']['x_coordinates'][:])
+
+
 
     if meta["ORBIT_DIRECTION"].startswith("D"):
         meta["HEADING"] = -168
@@ -231,88 +275,6 @@ def extract_metadata(h5_file):
     return meta
 
 ####################################################################################
-def extract_metadata_old(json_file):
-    """Extract ISCE3 metadata for MiaplPy."""
-    f = open(json_file)
-    jess_dict = json.load(f)
-
-    meta = {}
-    # copy over all metadata from unwrapStack
-    for key, value in jess_dict.items():
-        if key not in ["Dates", "perpendicularBaseline"]:
-            meta[key] = value
-
-    meta["ANTENNA_SIDE"] = -1
-    meta["PROCESSOR"] = "isce3"
-    #meta["FILE_LENGTH"] = jess_dict['geogrid']['length']
-    meta["LENGTH"] = jess_dict['geogrid']['length']
-    meta["ORBIT_DIRECTION"] = jess_dict['orbit_direction'].upper()
-    meta["PLATFORM"] = "Sen"
-    meta["WAVELENGTH"] = float(jess_dict['wavelength'])
-    meta["WIDTH"] = jess_dict['geogrid']['width']
-    #meta["NUMBER_OF_PAIRS"] = ds.RasterCount
-    meta["STARTING_RANGE"] = float(jess_dict['starting_range'])
-
-    if meta["ORBIT_DIRECTION"].startswith("D"):
-        meta["HEADING"] = -168
-    else:
-        meta["HEADING"] = -12
-
-    meta["ALOOKS"] = 1
-    meta["RLOOKS"] = 1
-    meta["RANGE_PIXEL_SIZE"] = float(meta["range_pixel_spacing"]) * meta["RLOOKS"]
-
-    # number of independent looks
-    #sen_dict = sensor.SENSOR_DICT['sen']
-    #rgfact = sen_dict['IW2']['range_resolution'] / sen_dict['range_pixel_size']
-    #azfact = sen_dict['IW2']['azimuth_resolution'] / sen_dict['azimuth_pixel_size']
-    #meta['NCORRLOOKS'] = meta['RLOOKS'] * meta['ALOOKS'] / (rgfact * azfact)
-
-    # geo transformation
-    #transform = ds.GetGeoTransform()
-
-    x_step = float(meta['geogrid']['spacing_x'])
-    y_step = float(meta['geogrid']['spacing_y'])
-    x_first = float(meta['geogrid']['start_x'])
-    y_first = float(meta['geogrid']['start_y'])
-
-
-    meta["X_FIRST"] = f'{x_first:.9f}'
-    meta["Y_FIRST"] = f'{y_first:.9f}'
-    meta["X_STEP"] = f'{x_step:.9f}'
-    meta["Y_STEP"] = f'{y_step:.9f}'
-    meta["X_UNIT"] = "m"
-    meta["Y_UNIT"] = "m"
-
-    utc = meta["sensing_start"].split(' ')[1]
-    utc = time.strptime(utc, "%H:%M:%S.%f")
-    meta["CENTER_LINE_UTC"] = utc.tm_hour*3600.0 + utc.tm_min*60.0 + utc.tm_sec  # Starting line in fact
-
-    # following values probably won't be used anywhere for the geocoded data
-    # earth radius
-    meta["EARTH_RADIUS"] = 6337286.638938101
-    # nominal altitude of Sentinel1 orbit
-    meta["HEIGHT"] = 693000.0
-
-    S = meta['runconfig']['processing']['geocoding']['bottom_right']['y']
-    N = meta['runconfig']['processing']['geocoding']['top_left']['y']
-    E = meta['runconfig']['processing']['geocoding']['bottom_right']['x']
-    W = meta['runconfig']['processing']['geocoding']['top_left']['x']
-
-    meta["Y_REF1"] = str(S)
-    meta["Y_REF2"] = str(S)
-    meta["Y_REF3"] = str(N)
-    meta["Y_REF4"] = str(N)
-    meta["X_REF1"] = str(W)
-    meta["X_REF2"] = str(E)
-    meta["X_REF3"] = str(W)
-    meta["X_REF4"] = str(E)
-
-    meta['INTERLEAVE'] = 'BSQ'
-    meta['PLATFORM'] = 'sen'
-
-    return meta
-
 
 def write_geometry(outfile, demFile, incAngleFile, azAngleFile=None, waterMaskFile=None,
                    box=None, xstep=1, ystep=1):
@@ -339,10 +301,10 @@ def write_geometry(outfile, demFile, incAngleFile, azAngleFile=None, waterMaskFi
         data = np.array(bnd.ReadAsArray(**kwargs), dtype=np.float32)
         data = multilook_data(data, ystep, xstep, method='nearest')
         data[data == bnd.GetNoDataValue()] = np.nan
-        f['height'][:,:] = data
+        f['height'][:, :] = data
 
         # slantRangeDistance
-        f['slantRangeDistance'][:,:] = float(f.attrs['STARTING_RANGE'])
+        f['slantRangeDistance'][:, :] = float(f.attrs['STARTING_RANGE'])
 
         # incidenceAngle
         ds = gdal.Open(incAngleFile, gdal.GA_ReadOnly)
@@ -350,7 +312,7 @@ def write_geometry(outfile, demFile, incAngleFile, azAngleFile=None, waterMaskFi
         data = bnd.ReadAsArray(**kwargs)
         data = multilook_data(data, ystep, xstep, method='nearest')
         data[data == bnd.GetNoDataValue()] = np.nan
-        f['incidenceAngle'][:,:] = data
+        f['incidenceAngle'][:, :] = data
 
         # azimuthAngle
         if azAngleFile is not None:
@@ -578,7 +540,7 @@ def prepare_geometry(geom_dir, metadata=dict(), update_mode=True):
     geom_files = [os.path.join(geom_dir, i) for i in geom_files]
 
     if not os.path.exists(geom_files[0]):
-        geom_files = [os.path.join(os.path.abspath(geom_dir), x + 'geo') for x in GEOMETRY_PREFIXS]
+        geom_files = [os.path.join(os.path.abspath(geom_dir), x + '.geo') for x in GEOMETRY_PREFIXS]
 
     geom_files = [i for i in geom_files if os.path.isfile(i)]
 
@@ -607,12 +569,12 @@ def load_isce3(iargs=None):
     print(f'update mode: {inps.update_mode}')
 
     meta_dir = inps.geometryDir
-    metaFile = sorted(glob.glob(meta_dir + '/*_iw*.h5'))[0]
+    metaFile = sorted(glob.glob(meta_dir + '/static*_iw*.h5'))[0]
 
     # extract metadata
     metadata = extract_metadata(metaFile)
-    inps.template_file = None
-    box, metadata = read_subset_box(inps.template_file, metadata)
+    #inps.template_file = None
+    box, metadata = read_subset_box(inps.template_file[0], metadata)
 
     # convert all value to string format
     for key, value in metadata.items():
@@ -622,7 +584,7 @@ def load_isce3(iargs=None):
     metadata = readfile.standardize_metadata(metadata)
 
     # rsc_file = os.path.join(os.path.dirname(inps.metaFile), 'data.rsc')
-    rsc_file = os.path.join(meta_dir, 'data.rsc')
+    rsc_file = metaFile.split('.')[-2] + '.rsc' #os.path.join(meta_dir, 'data.rsc')
     if rsc_file:
         print('writing ', rsc_file)
         writefile.write_roipac_rsc(metadata, rsc_file)

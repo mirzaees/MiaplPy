@@ -49,7 +49,8 @@ class geometryDict(GDict):
         if not self.extraMetadata:
             dsFile = self.datasetDict[self.dsNames[0]]
             if processor == 'isce3':
-                metadata = read_attribute(os.path.dirname(dsFile) + '/data', metafile_ext='.rsc')
+                #metadata = read_attribute(os.path.dirname(dsFile) + '/data', metafile_ext='.rsc')
+                metadata = read_attribute(dsFile.split('.')[0] + '.rsc', metafile_ext='.rsc')
             else:
                 metadata = read_attribute(dsFile.split('.xml')[0], metafile_ext='.rsc')
             #metadata = read_attribute(dsFile, metafile_ext='.rsc')
@@ -62,11 +63,12 @@ class geometryDict(GDict):
         else:
             dsName = family
 
-        if os.path.basename(self.file) == 'topo.h5':
-            metadata = read_attribute(os.path.dirname(self.file) + '/data', metafile_ext='.rsc')
+        if os.path.basename(self.file).startswith('static'):
+            metadata = read_attribute(self.file.split('.')[0] + '.rsc', metafile_ext='.rsc')
             metadata['FILE_TYPE'] = 'geometry'
             with h5py.File(self.file, 'r') as gds:
-                data = gds[dsdict_isce3[family]][box[1]:box[3], box[0]:box[2]]
+                gds_meta = gds['science']['SENTINEL1']['CSLC']['grids']['static_layers']
+                data = gds_meta[dsdict_isce3[family]][box[1]:box[3], box[0]:box[2]]
 
         else:
             self.file = self.datasetDict[family].split('.xml')[0]
@@ -108,8 +110,8 @@ class geometryDict(GDict):
             family = [i for i in self.datasetDict.keys() if i != 'bperp'][0]
         self.file = self.datasetDict[family]
         
-        if os.path.basename(self.file) == 'topo.h5':
-            self.metadata = read_attribute(os.path.dirname(self.file) + '/data', metafile_ext='.rsc')
+        if os.path.basename(self.file).startswith('static_layers'):
+            self.metadata = read_attribute(self.file.split('.')[0] + '.rsc', metafile_ext='.rsc')
         else:
             self.metadata = read_attribute(self.file.split('.xml')[0], metafile_ext='.rsc')
         #self.metadata = read_attribute(self.file, metafile_ext='.rsc')
@@ -230,7 +232,7 @@ class geometryDict(GDict):
                                                          t=str(dsDataType),
                                                          s=dsShape,
                                                          c=str(compression)))
-                #import pdb; pdb.set_trace()
+
                 data = np.array(self.read(family=dsName, box=box, dtype=dsDataType)[0], dtype=dsDataType)
                 if not dsName in f.keys():
                     ds = f.create_dataset(dsName,
@@ -249,7 +251,7 @@ class geometryDict(GDict):
             elif dsName == 'slantRangeDistance':
                 if self.processor == 'isce3':
                     key = 'SLANT_RANGE_DISTANCE'
-                    print(f'geocoded input, use contant value from metadata {key}')
+                    print(f'geocoded input, use content value from metadata {key}')
                     length = int(self.extraMetadata['LENGTH'])
                     width = int(self.extraMetadata['WIDTH'])
                     range_dist = range_distance(self.extraMetadata, dimension=2, print_msg=False)

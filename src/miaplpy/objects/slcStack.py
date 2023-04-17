@@ -45,10 +45,10 @@ class slcStackDict:
 
     Example:
         from miaplpy.objects.insarobj import slcStackDict
-        pairsDict = {('20160524','20160530'):slcObj1,
-                     ('20160524','20160605'):slcObj2,
-                     ('20160524','20160611'):slcObj3,
-                     ('20160530','20160605'):slcObj4,
+        pairsDict = {('20160530'):slcObj1,
+                     ('20160605'):slcObj2,
+                     ('20160611'):slcObj3,
+                     ('20160605'):slcObj4,
                      ...
                      }
         stackObj = slcStackDict(pairsDict=pairsDict)
@@ -155,7 +155,6 @@ class slcStackDict:
                                       compression=dsCompression)
 
                 prog_bar = ptime.progressBar(maxValue=self.numSlc)
-
                 for i in range(self.numSlc):
                     if not box:
                         box = (0, 0, self.width, self.length)
@@ -531,7 +530,6 @@ class slcDict:
                 setattr(self, key, value)
 
     def read(self, family, box=None, datasetName=None):
-
         if self.datasetDict[family].endswith('h5'):
             fname = self.datasetDict[family].split('.')[0]
             fext = '.h5'
@@ -549,7 +547,6 @@ class slcDict:
         atr = read_attribute(fname, datasetName=dsname4atr, metafile_ext='.rsc')
 
         # Read Data
-
         if fext in ['.h5', '.he5']:
             # box
             length, width = int(atr['LENGTH']), int(atr['WIDTH'])
@@ -557,7 +554,7 @@ class slcDict:
                 box = (0, 0, width, length)
             if atr['PROCESSOR'] == 'isce3':
                 with h5py.File(self.datasetDict[family], 'r') as sds:
-                    data = sds['SLC'][atr['POLARIZATION']][box[1]:box[3], box[0]:box[2]]
+                    data = sds['science']['SENTINEL1']['CSLC']['grids'][atr['POLARIZATION']][box[1]:box[3], box[0]:box[2]]
             else:
                 data = readfile.read_hdf5_file(fname, datasetName=datasetName, box=box)
             return data, atr

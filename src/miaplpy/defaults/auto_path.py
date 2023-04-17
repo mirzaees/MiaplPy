@@ -19,17 +19,17 @@ autoPath = True
 isce3AutoPath = '''##----------Default file path of ISCE3 products
 miaplpy.load.processor      = isce3
 
-miaplpy.load.slcFile        = ${PROJECT_DIR}/stack/*/*/*_iw*.h5
+miaplpy.load.slcFile        = ${PROJECT_DIR}/gslcs/*/*/t*_iw*.h5
 miaplpy.load.unwFile        = ${WORK_DIR}/inverted/interferograms_${int_type}/*/fi*.unw
 miaplpy.load.corFile        = ${WORK_DIR}/inverted/interferograms_${int_type}/*/fi*.cor
 miaplpy.load.connCompFile   = ${WORK_DIR}/inverted/interferograms_${int_type}/*/*.unw.conncomp
 
-miaplpy.load.demFile        = ${PROJECT_DIR}/stack/*/*/topo.h5
-miaplpy.load.lookupYFile    = ${PROJECT_DIR}/stack/*/*/topo.h5
-miaplpy.load.lookupXFile    = ${PROJECT_DIR}/stack/*/*/topo.h5
-miaplpy.load.incAngleFile   = ${PROJECT_DIR}/stack/*/*/topo.h5
-miaplpy.load.azAngleFile    = ${PROJECT_DIR}/stack/*/*/topo.h5
-miaplpy.load.shadowMaskFile = ${PROJECT_DIR}/stack/*/*/topo.h5
+miaplpy.load.demFile        = ${PROJECT_DIR}/gslcs/${burst_id}/*/static_layers*.h5
+miaplpy.load.lookupYFile    = ${PROJECT_DIR}/gslcs/${burst_id}/*/static_layers*.h5
+miaplpy.load.lookupXFile    = ${PROJECT_DIR}/gslcs/${burst_id}/*/static_layers*.h5
+miaplpy.load.incAngleFile   = ${PROJECT_DIR}/gslcs/${burst_id}/*/static_layers*.h5
+miaplpy.load.azAngleFile    = ${PROJECT_DIR}/gslcs/${burst_id}/*/static_layers*.h5
+miaplpy.load.shadowMaskFile = ${PROJECT_DIR}/gslcs/${burst_id}/*/static_layers*.h5
 
 '''
 
@@ -249,6 +249,7 @@ def get_auto_path(processor, work_dir, template=dict()):
 
     if processor == 'isce3':
         slc_dir = os.path.dirname(os.path.dirname(template['miaplpy.load.slcFile']))
+        var_dict['${burst_id}'] = os.path.basename(slc_dir)
         # template['miaplpy.load.metaFile'] = glob.glob('{}/*/*.json'.format(slc_dir))[0]
 
         if template['miaplpy.interferograms.networkType'] in ['delaunay', 'mini_stacks']:

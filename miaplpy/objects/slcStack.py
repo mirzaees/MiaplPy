@@ -279,10 +279,22 @@ class slcStack:
         self.sliceList = ['{}-{}'.format(self.name, i) for i in self.dateList]
         return None
 
+    def get_dates_isce3(self, ds):
+        tt = ds['time'][()]
+        ff = datetime.strptime(ds['time'].attrs['units'].split('seconds since ')[1], '%Y-%m-%d %H:%M:%S.%f')
+        ft = datetime.strptime('19691231-16', '%Y%m%d-%H')
+        st = (ff - ft).total_seconds()
+        dates = [datetime.fromtimestamp(t+st) for t in tt]
+        return [t.strftime('%Y%m%d') for t in dates]
+
     def get_metadata(self):
         with h5py.File(self.file, 'r') as f:
             self.metadata = dict(f.attrs)
-            dates = f['date'][:]
+            if 'date' in f:
+                dates = f['date'][:]
+                dateList = [i.decode('utf8') for i in dates]
+            else:
+                dateList = self.get_dates_isce3(f)
         for key, value in self.metadata.items():
             try:
                 self.metadata[key] = value.decode('utf8')
@@ -290,7 +302,7 @@ class slcStack:
                 self.metadata[key] = value
 
         # ref_date/index
-        dateList = [i.decode('utf8') for i in dates]
+
         if 'REF_DATE' not in self.metadata.keys():
             self.metadata['REF_DATE'] = dateList[0]
         self.refIndex = dateList.index(self.metadata['REF_DATE'])
@@ -309,7 +321,10 @@ class slcStack:
 
     def get_date_list(self):
         with h5py.File(self.file, 'r') as f:
-            self.dateList = [i.decode('utf8') for i in f['date'][:]]
+            if 'date' in f:
+                self.dateList = [i.decode('utf8') for i in f['date'][:]]
+            else:
+                self.dateList = self.get_dates_isce3(f)
         return self.dateList
 
     def read(self, datasetName=None, box=None, print_msg=True):

@@ -176,8 +176,8 @@ class miaplpyTimeSeriesAnalysis(TimeSeriesAnalysis):
                 self.metadata['LENGTH'] = self.metadata['box'][3] - self.metadata['box'][1]
                 self.metadata['WIDTH'] = self.metadata['box'][2] - self.metadata['box'][0]
             else:
-                self.metadata['LENGTH'] = int(self.metadata['LENGTH'])
-                self.metadata['WIDTH'] = int(self.metadata['WIDTH'])
+                self.metadata['LENGTH'] = int(float(self.metadata['LENGTH']))
+                self.metadata['WIDTH'] = int(float(self.metadata['WIDTH']))
 
             self.ifgram_dir, self.pairs = self.get_interferogram_pairs()
             os.makedirs(self.ifgram_dir, exist_ok=True)

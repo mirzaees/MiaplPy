@@ -25,7 +25,7 @@ cdef class CPhaseLink:
     cdef readonly bytes out_dir
     cdef readonly int time_lag
     cdef bytes mask_file
- 
+
 
 
 

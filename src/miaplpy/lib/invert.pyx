@@ -7,6 +7,7 @@ import os
 from libc.stdio cimport printf
 from miaplpy.objects.slcStack import slcStack
 import h5py
+import h5netcdf
 import time
 from datetime import datetime
 from osgeo import gdal, gdal_array
@@ -14,6 +15,7 @@ from pyproj import CRS
 from miaplpy.objects.crop_geo import create_grid_mapping, create_tyx_dsets
 from . cimport utils
 from.utils import process_patch_c
+
 
 DEFAULT_TILE_SIZE = [128, 128]
 DEFAULT_TIFF_OPTIONS = (
@@ -104,19 +106,31 @@ cdef class CPhaseLink:
         return
 
     def get_projection(self, slc_stack):
-        cdef int projection
-        cdef tuple geotransform
-        cdef cnp.ndarray[float, ndim=1] gt
-        with h5py.File(slc_stack, 'r') as ds:
-            if 'georeference' in ds:
-                projection = int(ds['georeference'].attrs['crs'].split(':')[1])
-                gt = ds['georeference']['transform'][()]
-                geotransform = (gt[0], gt[1], gt[2], gt[3], gt[4], gt[5])
+        cdef object ds, gt, projection
+        cdef str inp_file
+        cdef tuple geotransform, extent
+        #cdef cnp.ndarray[float, ndim=1] gt
+        inp_file = 'NETCDF:{}:/slc'.format(slc_stack)
+        ds = rioxarray.open_rasterio(inp_file, chunks=(1, 1280, 1280))
+        gt = ds.rio.transform()
+        geotransform = (gt[2], gt[0], 0, gt[5], 0, gt[4])
+        extent = ds.rio.bounds()
+        projection = CRS.from_epsg(ds.rio.crs.to_epsg())
+        return projection, geotransform, extent
 
-            else:
-                projection = 4326
-                geotransform = (0, 1, 0, 0, 0, 1)
-        return projection, geotransform
+    def get_dates(self, slc_stack):
+        cdef object ds, ff, ft
+        cdef list dates
+        cdef double[::1] tt
+        cdef double st
+        with h5py.File(slc_stack) as ds:
+            tt = ds['time'][()]
+            ff = datetime.strptime(ds['time'].attrs['units'].split('seconds since ')[1], '%Y-%m-%d %H:%M:%S.%f')
+            ft = datetime.strptime('19691231-16', '%Y%m%d-%H')
+            st = (ff - ft).total_seconds()
+            dates = [datetime.fromtimestamp(t+st) for t in tt]
+        return [t.strftime('%Y%m%d') for t in dates]
+
 
     def patch_slice(self):
         """
@@ -349,7 +363,7 @@ cdef class CPhaseLink:
 
     def unpatch(self):
         cdef list block
-        cdef object fhandle, psf
+        cdef object fhandle, psf, projection
         cdef int index, box_length, box_width
         cdef cnp.ndarray[int, ndim=1] box
         cdef bytes patch_dir
@@ -368,7 +382,7 @@ cdef class CPhaseLink:
         if os.path.exists(mask_ps_file.decode('UTF-8')):
             os.remove(mask_ps_file.decode('UTF-8'))
 
-        self.initiate_output()
+        # self.initiate_output()
         print('Concatenate and write wrapped phase time series to HDF5 file phase_series.h5 ')
         print('open  HDF5 file phase_series.h5 in a mode')
 
@@ -384,13 +398,13 @@ cdef class CPhaseLink:
                 box_length = box[3] - box[1]
 
                 patch_dir = self.out_dir + ('/PATCHES/PATCH_{:04.0f}'.format(index)).encode('UTF-8')
-                #rslc_ref = np.load(patch_dir.decode('UTF-8') + '/phase_ref.npy', allow_pickle=True)
+                rslc_ref = np.load(patch_dir.decode('UTF-8') + '/phase_ref.npy', allow_pickle=True)
                 temp_coh = np.load(patch_dir.decode('UTF-8') + '/tempCoh.npy', allow_pickle=True)
                 shp = np.load(patch_dir.decode('UTF-8') + '/shp.npy', allow_pickle=True)
                 mask_ps = np.load(patch_dir.decode('UTF-8') + '/mask_ps.npy', allow_pickle=True)
                 ps_prod = np.load(patch_dir.decode('UTF-8') + '/ps_products.npy', allow_pickle=True)
-                #if b'real_time' == self.phase_linking_method[0:9]:
-                #    rslc_ref_seq = np.load(patch_dir.decode('UTF-8') + '/phase_ref_seq.npy', allow_pickle=True)
+                # if b'real_time' == self.phase_linking_method[0:9]:
+                #     rslc_ref_seq = np.load(patch_dir.decode('UTF-8') + '/phase_ref_seq.npy', allow_pickle=True)
 
                 temp_coh[temp_coh<0] = 0
 
@@ -413,14 +427,14 @@ cdef class CPhaseLink:
                 reference_index_map[block[0]:block[1], block[2]:block[3]] = reference_index[:, :]
 
                 # temporal coherence - 3D
-                block = [0, 2, box[1], box[3], box[0], box[2]]
-                write_hdf5_block_3D(fhandle, temp_coh, b'temporalCoherence', block)
+                block = [0, 1, box[1], box[3], box[0], box[2]]
+                write_hdf5_block_2D_float(fhandle, temp_coh[0, :, :], b'temporalCoherence_full', block)
+                write_hdf5_block_2D_float(fhandle, temp_coh[1, :, :], b'temporalCoherence_avg', block)
+                #write_hdf5_block_3D(fhandle, temp_coh, b'temporalCoherence', block)
                 eig_values[0:3, block[2]:block[3], block[4]:block[5]] = ps_prod[1:4, :, :]
 
             ###
             print('close HDF5 file phase_series.h5.')
-
-            projection, geotransform = self.get_projection(self.inps.slc_stack)
 
             print('write amplitude dispersion and top eigen values')
             amp_disp_file = self.out_dir + b'/amp_dipersion_index.tif'

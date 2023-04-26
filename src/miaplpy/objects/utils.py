@@ -1288,13 +1288,12 @@ def read_initial_info(work_dir, templateFile):
     #import miaplpy.workflow
 
     slc_file = os.path.join(work_dir, 'inputs/slcStack.h5')
-
     if os.path.exists(slc_file):
         slcObj = slcStack(slc_file)
         slcObj.open(print_msg=False)
         date_list = slcObj.get_date_list()
         metadata = slcObj.get_metadata()
-        num_pixels = int(metadata['LENGTH']) * int(metadata['WIDTH'])
+        num_pixels = int(float(metadata['LENGTH']) * float(metadata['WIDTH']))
     else:
         scp_args = '--template {}'.format(templateFile)
         scp_args += ' --project_dir {} --work_dir {}'.format(os.path.dirname(work_dir), work_dir)

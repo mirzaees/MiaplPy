@@ -56,7 +56,7 @@ def main(iargs=None):
 
     inps.work_dir = os.path.dirname(inps.input_ifg)
 
-    if not os.path.exists(inps.work_dir + '/filt_fine.unw.conncomp.vrt'):
+    if not os.path.exists(inps.unwrapped_ifg + '.conncomp.vrt'):
        
         unwObj = Snaphu(inps)
         do_tiles, metadata = unwObj.need_to_split_tiles()
@@ -74,14 +74,14 @@ def main(iargs=None):
             runUnwrap(inps.input_ifg, inps.unwrapped_ifg, inps.input_cor, metadata, inps.unwrap_2stage)
 
     if inps.unwrap_2stage:
-        temp_unwrap = os.path.dirname(inps.unwrapped_ifg) + '/temp_filt_fine.unw'
+        temp_unwrap = os.path.dirname(inps.unwrapped_ifg) + f'/temp_{os.path.basename(inps.unwrapped_ifg)}'
         inpFile = temp_unwrap
         ccFile = glob.glob(os.path.dirname(inps.unwrapped_ifg) + '/*conncomp')[0]
         outFile = inps.unwrapped_ifg
         unwrap_2stage(inpFile, ccFile, outFile, unwrapper_2stage_name=None, solver_2stage=None)
 
     if inps.remove_filter_flag and not os.path.exists(inps.unwrapped_ifg + '.old'):
-        input_ifg_nofilter = os.path.join(os.path.dirname(inps.input_ifg), 'fine.int')
+        input_ifg_nofilter = inps.input_ifg.split('_filt')[0] + '.int'
         remove_filter(input_ifg_nofilter, inps.input_ifg, inps.unwrapped_ifg)
 
     print('Time spent: {} m'.format((time.time() - time0)/60))
@@ -92,8 +92,8 @@ def main(iargs=None):
 class Snaphu:
 
     def __init__(self, inps):
-
-        self.config_file = os.path.join(inps.work_dir, 'config_all')
+        pair = os.path.basename(inps.unwrapped_ifg).split('.')[0]
+        self.config_file = os.path.dirname(inps.unwrapped_ifg) + f'/unwrap_configs/config_{pair}'
         LENGTH = inps.ref_length
         WIDTH = inps.ref_width
         self.num_tiles = inps.num_tiles
@@ -101,7 +101,7 @@ class Snaphu:
         self.inp_wrapped = inps.input_ifg
         self.conncomp = inps.unwrapped_ifg + '.conncomp'
         if inps.unwrap_2stage:
-            self.out_unwrapped = os.path.dirname(inps.unwrapped_ifg) + '/temp_filt_fine.unw'
+            self.out_unwrapped = os.path.dirname(inps.unwrapped_ifg) + f'/temp_{os.path.basename(inps.unwrapped_ifg)}'
 
         self.length, self.width = self.get_image_size()
 
@@ -241,7 +241,7 @@ def runUnwrap(infile, outfile, corfile, config, unwrap_2stage=False):
     wrapName = infile
     unwrapName = outfile
     if unwrap_2stage:
-        unwrapName = os.path.dirname(outfile) + '/temp_filt_fine.unw'
+        unwrapName = os.path.dirname(outfile) + f'/temp_{os.path.basename(outfile)}'
 
     img = isceobj.createImage()
     img.load(infile + '.xml')
@@ -392,7 +392,7 @@ def remove_filter(intfile, filtfile, unwfile):
     ifgphas = np.angle(ds_ifg.GetRasterBand(1).ReadAsArray())
     del ds_ifg
 
-    oldunwf = unwfile.split('filt_fine.unw')[0] + 'old_filt_fine.unw'
+    oldunwf = os.path.dirname(unwfile) + '/old_' + os.path.basename(unwfile)
     unwImage_o = isceobj.Image.createUnwImage()
     unwImage_o.setFilename(oldunwf)
     unwImage_o.setAccessMode('write')

@@ -24,7 +24,6 @@ import isce3
 from typing import Optional, Any
 # from compass.utils.h5_helpers import Meta, add_dataset_and_attrs
 
-
 from mintpy.objects import (DATA_TYPE_DICT,
                             GEOMETRY_DSET_NAMES,
                             DSET_UNIT_DICT)
@@ -86,6 +85,7 @@ def create_tyx_dsets(
     #if not group.dimensions:
     #    group.dimensions = dict(time=times.size, y=y.size, x=x.size)
     # Create the datasets
+
     if not 'time' in group.keys():
         t_ds = group.create_dataset("time", (len(times),), data=times, dtype=float)
         y_ds = group.create_dataset("y", (len(y),), data=y, dtype=float)
@@ -340,9 +340,6 @@ class cropSLC:
         f = h5py.File(self.outputFile, access_mode)
         print('create HDF5 file {} with {} mode'.format(self.outputFile, access_mode))
 
-        #create_grid_mapping(group=f, crs=self.crs, gt=list(self.geotransform))
-        #create_tyx_dsets(group=f, gt=list(self.geotransform), times=self.dates, shape=(self.lengthc, self.widthc))
-
         dsShape = (self.numSlc, self.lengthc, self.widthc)
         dsDataType = dataType
         dsCompression = compression
@@ -392,6 +389,7 @@ class cropSLC:
                                                                           w=maxDigit,
                                                                           t=str(dsDataType),
                                                                           s=dsShape))
+
 
         data = np.array(self.dates, dtype=dsDataType)
         if not dsName in f.keys():

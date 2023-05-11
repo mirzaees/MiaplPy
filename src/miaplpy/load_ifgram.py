@@ -270,8 +270,9 @@ def read_subset_box(inpsDict):
 
 def prep_isce3(meta_file, obs_dir, obs_file, slc_files):
     from mintpy.prep_isce import prepare_stack
+
     #rsc_file = os.path.join(os.path.dirname(meta_file), 'data')
-    metadata = read_attribute(meta_file.split('.')[0], metafile_ext='.rsc')
+    metadata = read_attribute(meta_file, metafile_ext='.rsc')
 
     slc_dirs = sorted(glob.glob(slc_files))
     baseline_dict = {}
@@ -281,9 +282,9 @@ def prep_isce3(meta_file, obs_dir, obs_file, slc_files):
         baseline_dict[date] = [random_baseline, random_baseline]
 
     if obs_dir is not None:
-        obs_files = obs_dir + '/*/' + obs_file
+        obs_files = obs_dir + '/' + obs_file
     else:
-        obs_files = './inverted/interferograms_*/*/' + obs_file
+        obs_files = './inverted/interferograms_*/' + obs_file
 
     #metadata['OG_FILE_PATH'] = slc_dirs[0]
     print(obs_files)
@@ -339,14 +340,15 @@ def prepare_metadata(inpsDict):
             pass
     elif processor == 'isce3':
         meta_dir = os.path.dirname(sorted(glob.glob(os.path.dirname(inpsDict['miaplpy.load.slcFile'])+'/static_layers_*.h5'))[0])
-        meta_file = meta_dir + '/data.src'
+        meta_file = glob.glob(meta_dir + '/*.rsc')[0]
         slc_files = inpsDict['miaplpy.load.slcFile']
         # observation
         obs_keys = ['miaplpy.load.unwFile', 'miaplpy.load.azOffFile']
         obs_keys = [i for i in obs_keys if i in inpsDict.keys()]
         obs_paths = [inpsDict[key] for key in obs_keys if inpsDict[key].lower() != 'auto']
+
         if len(obs_paths) > 0:
-            obs_dir = os.path.dirname(os.path.dirname(obs_paths[0]))
+            obs_dir = os.path.dirname(obs_paths[0])
             obs_file = os.path.basename(obs_paths[0])
         else:
             obs_dir = None

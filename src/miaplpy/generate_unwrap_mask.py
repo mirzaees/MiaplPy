@@ -12,6 +12,7 @@ import mintpy
 from mintpy.utils import readfile, writefile
 import mintpy.workflow
 import numpy as np
+from osgeo import gdal
 
 def main(iargs=None):
     """
@@ -36,6 +37,11 @@ def main(iargs=None):
 
     shadow_mask = os.path.join(miaplpy_dir, 'shadow_mask.h5')
     corr_file = os.path.join(miaplpy_dir, 'inverted/tempCoh_average')
+
+    cg = gdal.Open(corr_file)
+    cg_data = cg.GetRasterBand(1).ReadAsArray()
+    mask_c = np.ones(cg_data.shape, dtype='bool')
+    mask_c[cg_data <= 0.1] = 0
 
     with h5py.File(inps.geometry_stack, 'r') as ds:
         if 'shadowMask' in ds.keys():
@@ -79,17 +85,20 @@ def main(iargs=None):
         with h5py.File(h5_mask, 'r') as f:
             mask = f['mask'][:, :]
     else:
-        mask = np.ones((int(atr_in['LENGTH']), int(atr_in['WIDTH'])), dtype='int16')
+        mask = np.ones((int(atr_in['LENGTH']), int(atr_in['WIDTH'])), dtype='bool')
+
+    mask *= mask_c
 
     if not inps.output_mask is None:
         unwrap_mask = inps.output_mask
     else:
         unwrap_mask = os.path.join(miaplpy_dir, 'inverted/mask_unwrap')
 
+    atr['DATA_TYPE'] = 'bool'
+
     writefile.write(mask, out_file=unwrap_mask, metadata=atr)
 
     plot_masks(miaplpy_dir)
-
 
     return
 

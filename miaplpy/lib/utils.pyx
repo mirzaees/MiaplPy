@@ -719,8 +719,8 @@ cdef inline tuple real_time_phase_linking_iterate(float complex[:,::1] full_stac
         amp_arch = mean_along_axis_x(absmat2(archive_stack))
         vec_refined = np.zeros(num_archived, dtype=np.complex64)
         for t in range(1, num_archived):
-            vec_refined1[t] = amp_arch[t] * cexpf(1j * cargf(vec_refined1[t]))
-            vec_refined[t] = vec_refined1[t] * conjf(vec_refined1[t-1])
+            vec_refined1[t] = amp_arch[t] * cexpf(1j * cargf(vec_refined1[t])) * amp_arch[0] / sqrt(amp_arch[0]**2 * (amp_arch[t]**2))
+            vec_refined[t] = vec_refined1[t] * conjf(vec_refined1[t-1]) / sqrt(cabsf(vec_refined1[t])**2 * (cabsf(vec_refined1[t-1])**2))
 
         ph_tmp = np.zeros(num_archived, dtype=np.complex64)
         ph_tmp1 = np.zeros(num_archived, dtype=np.complex64)
@@ -755,7 +755,7 @@ cdef inline tuple real_time_phase_linking_iterate(float complex[:,::1] full_stac
         n_ph = ph_new.shape[0]
 
         amp_refined = mean_along_axis_x(absmat2(new_image))[0]
-        ph_new[n_ph-1] = amp_refined * cexpf(1j * cargf(ph_new[n_ph-1]))
+        ph_new[n_ph-1] = amp_refined * cexpf(1j * cargf(ph_new[n_ph-1]))*cabsf(ph_new[0]) / sqrt(amp_refined ** 2 * (cabsf(ph_new[0])**2))
 
 
         vec_refined = np.zeros(t + 1, dtype=np.complex64)
@@ -763,7 +763,7 @@ cdef inline tuple real_time_phase_linking_iterate(float complex[:,::1] full_stac
         for i in range(t):
             vec_refined[i] = ph_tmp[i]
             vec_refined1[i] = ph_tmp1[i]
-        vec_refined[t] = ph_new[n_ph-1] * conjf(ph_new[n_ph-2])
+        vec_refined[t] = ph_new[n_ph-1] * conjf(ph_new[n_ph-2]) / sqrt(cabsf(ph_new[n_ph-1])**2 * (cabsf(ph_new[n_ph-2])**2))
         vec_refined1[t] = ph_new[n_ph - 1]
 
         ph_tmp = np.zeros(t + 1, dtype=np.complex64)
@@ -1255,7 +1255,7 @@ def process_patch_c(cnp.ndarray[int, ndim=1] box, int range_window, int azimuth_
     cdef float complex[::1] vec_refined1 = np.empty(n_image, dtype=np.complex64)
     cdef float[::1] amp_refined =  np.zeros(n_image, dtype=np.float32)
     cdef bint noise = False
-    cdef float temp_quality, temp_quality_full
+    cdef float temp_quality, temp_quality_full, denom
     cdef object prog_bar
     cdef bytes out_folder
     cdef int ps, index = box[4]
@@ -1309,7 +1309,8 @@ def process_patch_c(cnp.ndarray[int, ndim=1] box, int range_window, int azimuth_
                 for m in range(n_image):
                     vec_refined[m] = patch_slc_images[m, data[0], data[1]]  * x0
                     amp_refined[m] = cabsf(patch_slc_images[m, data[0], data[1]])
-                    rslc_ref[m, data[0] - row1, data[1] - col1] = amp_refined[m] * cexpf(1j * cargf(vec_refined[m]))
+                    rslc_ref[m, data[0] - row1, data[1] - col1] = amp_refined[m] * amp_refined[0] * cexpf(1j * cargf(vec_refined[m])) / \
+                                                                  sqrt(amp_refined[m] ** 2 * (amp_refined[0] ** 2))
 
                 temp_quality, vec, amp_disp, eigv1, eigv2, top_percent = test_PS_cy(coh_mat, amp_refined)
                 PSprod[0, data[0] - row1, data[1] - col1] = amp_disp
@@ -1329,7 +1330,7 @@ def process_patch_c(cnp.ndarray[int, ndim=1] box, int range_window, int azimuth_
                     for m in range(1, n_image):
                         x0 = conjf(patch_slc_images[m-1, data[0], data[1]])
                         vec_refined1[m] = patch_slc_images[m, data[0], data[1]] * x0
-                        rslc_ref_seq[m, data[0] - row1, data[1] - col1] = amp_refined[m] * cexpf(1j * cargf(vec_refined1[m]))
+                        rslc_ref_seq[m, data[0] - row1, data[1] - col1] = vec_refined1[m]/ sqrt(cabsf(vec_refined1[m]) ** 2 * cabsf(x0 ** 2))
 
             else:
 
@@ -1361,9 +1362,10 @@ def process_patch_c(cnp.ndarray[int, ndim=1] box, int range_window, int azimuth_
 
                     for m in range(n_image):
                         if m == 0:
-                            rslc_ref[0, data[0] - row1, data[1] - col1] = amp_refined[0] + 0j
+                            rslc_ref[0, data[0] - row1, data[1] - col1] = amp_refined[0] * cexpf(1j * 0)
                         else:
-                            rslc_ref[m, data[0] - row1, data[1] - col1] = amp_refined[m] * cexpf(1j * cargf(vec_refined[m]))
+                            rslc_ref[m, data[0] - row1, data[1] - col1] = amp_refined[m] * amp_refined[0] * cexpf(1j * cargf(vec_refined[m]))/ \
+                                                                          sqrt(amp_refined[m] ** 2 * (amp_refined[0] ** 2))
 
             if temp_quality < 0:
                 temp_quality = 0
@@ -1378,13 +1380,15 @@ def process_patch_c(cnp.ndarray[int, ndim=1] box, int range_window, int azimuth_
             tempCoh[1, data[0] - row1, data[1] - col1] = 0.1    # Full stack temporal coherence
             SHP[data[0] - row1, data[1] - col1] = 1
             for m in range(n_image):
-                    rslc_ref[m, data[0] - row1, data[1] - col1] = patch_slc_images[m, data[0], data[1]]  * x0
+                    denom = sqrt(cabsf(patch_slc_images[m, data[0], data[1]])**2 * cabsf(x0))
+                    rslc_ref[m, data[0] - row1, data[1] - col1] = patch_slc_images[m, data[0], data[1]]  * x0 / denom
 
             if phase_linking_method[0:9] == b'real_time':
-                rslc_ref_seq[0, data[0] - row1, data[1] - col1] = patch_slc_images[0, data[0], data[1]] * x0
+                rslc_ref_seq[0, data[0] - row1, data[1] - col1] = cexpf(1j * cargf(patch_slc_images[0, data[0], data[1]] * x0))
                 for m in range(1, n_image):
                     x0 = conjf(patch_slc_images[m-1, data[0], data[1]])
-                    rslc_ref_seq[m, data[0] - row1, data[1] - col1] = patch_slc_images[m, data[0], data[1]] * x0
+                    denom = sqrt(cabsf(patch_slc_images[m, data[0], data[1]]) ** 2 * cabsf(x0))
+                    rslc_ref_seq[m, data[0] - row1, data[1] - col1] = patch_slc_images[m, data[0], data[1]] * x0 / denom
 
 
         prog_bar.update(p + 1, every=500, suffix='{}/{} pixels, patch {}'.format(p + 1, num_points, index))

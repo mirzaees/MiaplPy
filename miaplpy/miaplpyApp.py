@@ -198,13 +198,30 @@ class miaplpyTimeSeriesAnalysis(TimeSeriesAnalysis):
         return
 
     def _read_template_miaplpy(self):
+
+        if self.org_custom_template:
+            cdict = readfile.read_template(self.org_custom_template)
+            standardValues = {
+                'def': 'auto', 'default': 'auto',
+                'y': 'yes', 'on': 'yes', 'true': 'yes',
+                'n': 'no', 'off': 'no', 'false': 'no',
+            }
+            for key, value in cdict.items():
+                if value in standardValues.keys():
+                    cdict[key] = standardValues[value]
+        else:
+            cdict = self.customTemplate
+
+        #if 'processor' in cdict.keys():
+        #    cdict['miaplpy.load.processor'] = cdict['processor']
+
         if self.org_custom_template:
             # Update default template file based on custom template
             print('update default template based on input custom template')
-            if not 'mintpy.load.processor' in self.customTemplate and 'miaplpy.load.processor' in self.customTemplate:
+            if not 'mintpy.load.processor' in self.customTemplate and 'miaplpy.load.processor' in cdict:
                 self.customTemplate['mintpy.load.processor'] = self.customTemplate['miaplpy.load.processor']
 
-            self.templateFile = ut.update_template_file(self.templateFile, self.customTemplate)
+            self.templateFile = ut.update_template_file(self.templateFile, cdict)
             self.templateFile_mintpy = ut.update_template_file(self.templateFile_mintpy, self.customTemplate)
         # 2) backup custome/default template file in inputs/pic folder
         for backup_dirname in ['inputs']:
@@ -559,22 +576,24 @@ class miaplpyTimeSeriesAnalysis(TimeSeriesAnalysis):
         unwrap_mask = os.path.join(self.workDir, 'inverted/mask_unwrap')
         #unwrap_mask = os.path.abspath(self.template['miaplpy.unwrap.mask'])
 
+        suffix = self.ifgram_dir.split('interferograms_')[1]
+        out_dir = os.path.dirname(self.ifgram_dir) + f'/unwrap_{suffix}'
+        os.makedirs(out_dir, exist_ok=True)
+        os.makedirs(out_dir + '/unwrap_configs', exist_ok=True)
+
         for pair in self.pairs:
-            out_dir = os.path.join(self.ifgram_dir, pair[0] + '_' + pair[1])
-            #if float(self.template['miaplpy.interferograms.filterStrength']) > 0:
-            #    corr_file = os.path.join(out_dir, 'filt_fine.cor')
-            #os.makedirs(out_dir, exist_ok='True')
+            out_ifg = os.path.join(out_dir, pair[0] + '_' + pair[1] + '.unw')
+            inp_ifg = os.path.join(self.ifgram_dir, pair[0] + '_' + pair[1] + '_filt.int')
 
             scp_args = '--ifg {a1} --coherence {a2} --unwrapped_ifg {a3} '\
                        '--max_discontinuity {a4} --init_method {a5} --length {a6} ' \
                        '--width {a7} --height {a8} --num_tiles {a9} --earth_radius {a10} ' \
-                       ' --wavelength {a11}'.format(a1=os.path.join(out_dir, 'filt_fine.int'),
-                                                             a2=corr_file,
-                                                             a3=os.path.join(out_dir, 'filt_fine.unw'),
-                                                             a4=self.template['miaplpy.unwrap.snaphu.maxDiscontinuity'],
-                                                             a5=self.template['miaplpy.unwrap.snaphu.initMethod'],
-                                                             a6=length, a7=width, a8=height, a9=ntiles,
-                                                             a10=earth_radius, a11=wavelength)
+                       ' --wavelength {a11}'.format(a1=inp_ifg, a2=corr_file, a3=out_ifg,
+                                                    a4=self.template['miaplpy.unwrap.snaphu.maxDiscontinuity'],
+                                                    a5=self.template['miaplpy.unwrap.snaphu.initMethod'],
+                                                    a6=length, a7=width, a8=height, a9=ntiles,
+                                                    a10=earth_radius, a11=wavelength)
+
             if self.template['miaplpy.unwrap.mask']:
                 scp_args += ' -m {a12}'.format(a12=unwrap_mask)
             if float(self.template['miaplpy.interferograms.filterStrength']) > 0 and self.template['miaplpy.unwrap.removeFilter']:

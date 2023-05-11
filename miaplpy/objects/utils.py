@@ -560,7 +560,7 @@ def read(fname, box=None, datasetName=None, data_type=np.float32, print_msg=True
         dsname4atr = datasetName.split('-')[0]
 
     files = [fname + i for i in ['.rsc', '.xml']] #+ [os.path.dirname(fname) + '/data.rsc']
-    import pdb; pdb.set_trace()
+
     #fname0 = [fi for fi in files if os.path.exists(fi)][0]
     fext0 = ['.' + i.split('.')[-1] for i in files if os.path.exists(i)][0]
 
@@ -1283,7 +1283,6 @@ def update_or_skip_inversion(inverted_date_list, slc_dates):
 
 def read_initial_info(work_dir, templateFile):
     from miaplpy.objects.slcStack import slcStack
-    #import miaplpy.workflow
 
     slc_file = os.path.join(work_dir, 'inputs/slcStack.h5')
     if os.path.exists(slc_file):

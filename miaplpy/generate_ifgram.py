@@ -16,14 +16,14 @@ def enablePrint():
 
 blockPrint()
 import datetime
-#import isceobj
+import isceobj
 import numpy as np
 from miaplpy.objects.arg_parser import MiaplPyParser
 import h5py
 from math import sqrt, exp
 from osgeo import gdal
-import rioxarray
 import dask.array as da
+from pyproj import CRS
 
 enablePrint()
 
@@ -48,16 +48,21 @@ def main(iargs=None):
         print(string)
 
     print(inps.out_dir)
-    os.makedirs(inps.out_dir, exist_ok=True)
+    #os.makedirs(inps.out_dir, exist_ok=True)
 
-    ifg_file_name = run_interferogram(inps)
-    run_coherence(ifg_file_name)
+    #ifg_file_name = run_interferogram(inps)
+    #run_coherence(ifg_file_name)
 
-    '''
-    resampName = inps.out_dir + '/fine'
+
+    #resampName = inps.out_dir + '/fine'
+    #resampInt = resampName + '.int'
+    #filtInt = os.path.dirname(resampInt) + '/filt_fine.int'
+    #cor_file = os.path.dirname(resampInt) + '/filt_fine.cor'
+
+    resampName = inps.out_dir
     resampInt = resampName + '.int'
-    filtInt = os.path.dirname(resampInt) + '/filt_fine.int'
-    cor_file = os.path.dirname(resampInt) + '/filt_fine.cor'
+    filtInt = resampName + '_filt.int'
+    cor_file = resampName + '_filt.cor'
 
     if os.path.exists(cor_file + '.xml'):
         return
@@ -69,10 +74,10 @@ def main(iargs=None):
 
     estCoherence(filtInt, cor_file)
     #run_interpolation(filtInt, inps.stack_file, length, width)
-    '''
+
     return
 
-def write_projection(src_file: Filename, dst_file: Filename) -> None:
+def write_projection(src_file, dst_file) -> None:
     with h5py.File(src_file, 'r') as ds:
         projection = ds.attrs["spatial_ref"].decode('utf-8')
         geotransform = d['georeference']['transform'][()]
@@ -86,7 +91,7 @@ def write_projection(src_file: Filename, dst_file: Filename) -> None:
     ds_src = ds_dst = None
     return
 
-def run_interferogram(inps):
+def run_interferogram_2(inps):
     # sequential = True
     sequential = False
     out_file = inps.out_dir + '.tif'
@@ -95,9 +100,9 @@ def run_interferogram(inps):
     # sequential interferograms
     with h5py.File(inps.stack_file, 'r') as ds:
         if 'spatial_ref' in ds.attrs:
-            projection = ds.attrs["spatial_ref"].decode('utf-8')
-        else:
-            prpjection = 'None'
+            projection = CRS.from_wkt(ds['spatial_ref'].attrs['crs_wkt'])
+            geotransform = tuple([int(float(x)) for x in ds['spatial_ref'].attrs['GeoTransform'].split()])
+
         date_list = np.array([x.decode('UTF-8') for x in ds['date'][:]])
         ref_ind = np.where(date_list == inps.reference)[0][0]
         sec_ind = np.where(date_list == inps.secondary)[0][0]
@@ -142,7 +147,7 @@ def run_coherence(ifg_filename):
     return
 
 
-def run_interferogram_old(inps, resampName):
+def run_interferogram(inps, resampName):
     if inps.azlooks * inps.rglooks > 1:
         extention = '.ml.slc'
     else:
@@ -191,11 +196,12 @@ def run_interferogram_old(inps, resampName):
                     sec_phase = phase_series[sec_ind, row_1:row_2, col_1:col_2].reshape(row_2 - row_1, col_2 - col_1)
                     ref_amplitude = amplitudes[ref_ind, row_1:row_2, col_1:col_2].reshape(row_2 - row_1, col_2 - col_1)
                     sec_amplitude = amplitudes[sec_ind, row_1:row_2, col_1:col_2].reshape(row_2 - row_1, col_2 - col_1)
+                    denom = 1 #np.sqrt(ref_amplitude ** 2 * sec_amplitude ** 2)
 
                     if ref_ind - sec_ind == 1:
-                        ifg = ref_amplitude * np.exp(1j * ref_phase)
+                        ifg = (ref_amplitude * sec_amplitude) * np.exp(1j * ref_phase)
                     if ref_ind - sec_ind == -1:
-                        ifg = sec_amplitude * np.exp(-1j * sec_phase)
+                        ifg = (ref_amplitude * sec_amplitude) * np.exp(-1j * sec_phase)
                     if (ref_ind - sec_ind) > 1:
                         phase = ref_phase + sec_phase
                         for ti in range(sec_ind+1, ref_ind):
@@ -209,8 +215,8 @@ def run_interferogram_old(inps, resampName):
                             phase += sec_phase
                         ifg = (ref_amplitude * sec_amplitude) * np.exp(-1j * phase)
 
-                    ifg[np.isnan(ifg)] = 0 + 1j*0
-                    out_ifg[row_1:row_2, col_1:col_2, 0] = ifg[:, :]
+                    #ifg[np.isnan(ifg)] = 0 + 1j*0
+                    out_ifg[row_1:row_2, col_1:col_2, 0] = np.nan_to_num(ifg[:, :]/denom)
 
             intImage.renderHdr()
             intImage.finalizeImage()
@@ -255,11 +261,12 @@ def run_interferogram_old(inps, resampName):
                     sec_phase = phase_series[sec_ind, row_1:row_2, col_1:col_2].reshape(row_2 - row_1, col_2 - col_1)
                     ref_amplitude = amplitudes[ref_ind, row_1:row_2, col_1:col_2].reshape(row_2 - row_1, col_2 - col_1)
                     sec_amplitude = amplitudes[sec_ind, row_1:row_2, col_1:col_2].reshape(row_2 - row_1, col_2 - col_1)
+                    denom = 1 #np.sqrt(ref_amplitude ** 2 * sec_amplitude ** 2)
 
-                    ifg = (ref_amplitude * sec_amplitude) * np.exp(1j * (ref_phase - sec_phase))
+                    ifg = (ref_amplitude * sec_amplitude) * np.exp(1j * (ref_phase - sec_phase)) / denom
 
-                    ifg[np.isnan(ifg)] = 0 + 1j * 0
-                    out_ifg[row_1:row_2, col_1:col_2, 0] = ifg[:, :]
+                    # ifg[np.isnan(ifg)] = 0 + 1j * 0
+                    out_ifg[row_1:row_2, col_1:col_2, 0] = np.nan_to_num(ifg[:, :])
 
             intImage.renderHdr()
             intImage.finalizeImage()

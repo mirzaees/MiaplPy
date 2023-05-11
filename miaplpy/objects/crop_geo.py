@@ -11,7 +11,6 @@ from typing import Optional, List, Tuple, Union
 from pathlib import Path
 import xarray as xr
 import h5py
-import h5netcdf
 from osgeo import gdal, osr
 from os import fspath
 import datetime
@@ -23,7 +22,7 @@ import time
 import rioxarray
 import isce3
 from typing import Optional, Any
-from compass.utils.h5_helpers import Meta, add_dataset_and_attrs
+# from compass.utils.h5_helpers import Meta, add_dataset_and_attrs
 
 from mintpy.objects import (DATA_TYPE_DICT,
                             GEOMETRY_DSET_NAMES,
@@ -51,10 +50,10 @@ HDF5_OPTS = dict(
 )
 
 
-def create_grid_mapping(group, crs: CRS, gt: list[float]) -> h5netcdf.Variable:
+def create_grid_mapping(group, crs: CRS, gt: list):
     """Set up the grid mapping variable."""
     # https://github.com/corteva/rioxarray/blob/21284f67db536d9c104aa872ab0bbc261259e59e/rioxarray/rioxarray.py#L34
-    dset = group.create_variable('spatial_ref', (), data=0, dtype=int)
+    dset = group.create_dataset('spatial_ref', (), dtype=int)
     dset.attrs.update(crs.to_cf())
     # Also add the GeoTransform
     gt_string = " ".join([str(x) for x in gt])
@@ -72,21 +71,20 @@ def create_grid_mapping(group, crs: CRS, gt: list[float]) -> h5netcdf.Variable:
 
 
 def create_tyx_dsets(
-    group: h5netcdf.Group,
-    gt: list[float],
-    times: list[datetime.datetime],
-    shape: tuple[int, int],
-) -> tuple[h5netcdf.Variable, h5netcdf.Variable]:
+    group,
+    gt: list,
+    times: list,
+    shape: tuple):
     """Create the time, y, and x coordinate datasets."""
     y, x = create_yx_arrays(gt, shape)
     times, calendar, units = create_time_array(times)
 
-    if not group.dimensions:
-        group.dimensions = dict(time=times.size, y=y.size, x=x.size)
+    #if not group.dimensions:
+    #    group.dimensions = dict(time=times.size, y=y.size, x=x.size)
     # Create the datasets
-    t_ds = group.create_variable("time", ("time",), data=times, dtype=float)
-    y_ds = group.create_variable("y", ("y",), data=y, dtype=float)
-    x_ds = group.create_variable("x", ("x",), data=x, dtype=float)
+    t_ds = group.create_dataset("time", (len(times),), data=times, dtype=float)
+    y_ds = group.create_dataset("y", (len(y),), data=y, dtype=float)
+    x_ds = group.create_dataset("x", (len(x),), data=x, dtype=float)
 
     t_ds.attrs["standard_name"] = "time"
     t_ds.attrs["long_name"] = "time"
@@ -102,8 +100,8 @@ def create_tyx_dsets(
 
 
 def create_yx_arrays(
-    gt: list[float], shape: tuple[int, int]
-) -> tuple[np.ndarray, np.ndarray]:
+    gt: list, shape: tuple
+) -> tuple:
     """Create the x and y coordinate datasets."""
     ysize, xsize = shape
     # Parse the geotransform
@@ -141,14 +139,14 @@ def add_complex_ctype(h5file: h5py.File):
 
 def create_geo_dataset_3d(
     *,
-    group: h5netcdf.Group,
+    group,
     name: str,
     description: str,
     fillvalue: float,
-    attrs: Optional[dict[str, Any]],
+    attrs: dict,
     timelength: int,
-    dtype: Union[np.dtype, str],
-) -> h5netcdf.Variable:
+    dtype,):
+
     dimensions = ["time", "y", "x"]
     if attrs is None:
         attrs = {}
@@ -158,9 +156,9 @@ def create_geo_dataset_3d(
     options["chunks"] = (timelength, *options["chunks"])
     options['dtype'] = dtype
 
-    dset = group.create_variable(
+    dset = group.create_dataset(
         name,
-        dimensions=dimensions,
+        ndim=3,
         fillvalue=fillvalue,
         **options,
     )
@@ -281,50 +279,65 @@ class cropSLC:
         self.outputFile = outputFile
         print('create HDF5 file {} with {} mode'.format(self.outputFile, access_mode))
         dsName = 'slc'
-        dask_chunks = (1, 1280, 1280)
-        add_complex_ctype(self.outputFile)
-        f = h5netcdf.File(self.outputFile, access_mode, invalid_netcdf=True)
-        create_grid_mapping(group=f, crs=self.crs, gt=list(self.geotransform))
-        create_tyx_dsets(group=f, gt=list(self.geotransform), times=self.dates, shape=(self.lengthc, self.widthc))
-        slc_ds = create_geo_dataset_3d(group=f, name=dsName, description="SLC complex data", timelength=self.numSlc,
-                                       fillvalue=np.nan + 1j * np.nan, attrs={}, dtype=np.complex64)
-
-
-        f.close()
 
         f = h5py.File(self.outputFile, access_mode)
-        slc_ds = f[dsName]
+        print('create HDF5 file {} with {} mode'.format(self.outputFile, access_mode))
+        create_grid_mapping(group=f, crs=self.crs, gt=list(self.geotransform))
+        create_tyx_dsets(group=f, gt=list(self.geotransform), times=self.dates, shape=(self.lengthc, self.widthc))
+
+        dsShape = (self.numSlc, self.lengthc, self.widthc)
+        dsDataType = dataType
+        dsCompression = compression
+
+        self.bperp = np.zeros(self.numSlc)
+
+        print(('create dataset /{d:<{w}} of {t:<25} in size of {s}'
+               ' with compression = {c}').format(d=dsName,
+                                                 w=maxDigit,
+                                                 t=str(dsDataType),
+                                                 s=dsShape,
+                                                 c=dsCompression))
+
+        if dsName in f.keys():
+            ds = f[dsName]
+        else:
+            ds = f.create_dataset(dsName,
+                                  shape=dsShape,
+                                  maxshape=(None, dsShape[1], dsShape[2]),
+                                  dtype=dsDataType,
+                                  chunks=True,
+                                  compression=dsCompression)
+
+            ds.attrs.update(long_name="SLC complex data")
+            ds.attrs["grid_mapping"] = 'spatial_ref'
 
         prog_bar = ptime.progressBar(maxValue=self.numSlc)
-        # 3D datasets containing slc.
         for i in range(self.numSlc):
+            box = self.rdr_bbox
             slcObj = self.pairsDict[self.dates[i]]
-            slc_file = slcObj.datasetDict['slc']
-            #inp_file = 'NETCDF:{}:/science/SENTINEL1/CSLC/grids/VV'.format(slc_file)
-            subset = self.read_subset(slc_file)
-            #subset = rioxarray.open_rasterio(inp_file, chunks=dask_chunks).sel(band=1, x=slice(self.bb_utm[0],
-            #                                                                                   self.bb_utm[2]),
-            #                                                                   y=slice(self.bb_utm[3], self.bb_utm[1]))
-            slc_ds[i, :, :] = subset[:, :]
+            dsSlc, metadata = slcObj.read(dsName, box=box)
+            ds[i, :, :] = dsSlc[:, :]
+
             self.bperp[i] = slcObj.get_perp_baseline()
             prog_bar.update(i + 1, suffix='{}'.format(self.dates[i][0]))
+
         prog_bar.close()
-        slc_ds.attrs['MODIFICATION_TIME'] = str(time.time())
+        ds.attrs['MODIFICATION_TIME'] = str(time.time())
 
         ###############################
         # 1D dataset containing dates of all images
-        #dsName = 'date'
-        #dsDataType = np.string_
-        #dsShape = (self.numSlc, 1)
-        #print('create dataset /{d:<{w}} of {t:<25} in size of {s}'.format(d=dsName,
-        #                                                                  w=maxDigit,
-        #                                                                  t=str(dsDataType),
-        #                                                                  s=dsShape))
+        dsName = 'date'
+        dsDataType = np.string_
+        dsShape = (self.numSlc, 1)
+        print('create dataset /{d:<{w}} of {t:<25} in size of {s}'.format(d=dsName,
+                                                                          w=maxDigit,
+                                                                          t=str(dsDataType),
+                                                                          s=dsShape))
 
 
-        #data = np.array(self.dates, dtype=dsDataType)
-        #if not dsName in f.keys():
-            # f.create_dataset(dsName, data=data)
+        data = np.array(self.dates, dtype=dsDataType)
+        if not dsName in f.keys():
+            f.create_dataset(dsName, data=data)
 
         ###############################
         # 1D dataset containing perpendicular baseline of all pairs
@@ -338,7 +351,6 @@ class cropSLC:
         data = np.array(self.bperp, dtype=dsDataType)
         if not dsName in f.keys():
             f.create_dataset(dsName, data=data)
-            #f.create_variable(dsName, dimensions=['time'], data=data, dtype=dsDataType)
 
         ###############################
         # Attributes

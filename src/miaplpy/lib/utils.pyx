@@ -617,6 +617,8 @@ cdef inline tuple real_time_phase_linking(float complex[:,::1] compressed, float
 
     if num_oldim + num_newim == 2*mini_stack_size:
         starting_line = num_oldim - (mini_stack_size - num_newim)
+    else:
+        starting_line = 0
 
     if num_oldim + num_newim == 2 * mini_stack_size - 1:
         do_squeeze = True
@@ -1195,7 +1197,7 @@ cdef inline float gam_pta_c(float[:, ::1] ph_filt, float complex[::1] vec):
     cdef float temp_coh 
     cdef float complex temp = 0
 
-    for i in range(n):
+    for i in range(n-1):
         for k in range(i + 1, n):
             temp += cexpf(1j * (ph_filt[i,k] - (ang_vec[i] - ang_vec[k])))
 

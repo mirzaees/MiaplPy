@@ -560,7 +560,7 @@ class slcDict:
             dsname4atr = datasetName.split('-')[0]
 
         atr = read_attribute(fname, datasetName=dsname4atr, metafile_ext='.rsc')
-
+       
         # Read Data
         if fext in ['.h5', '.he5']:
             # box
@@ -569,7 +569,7 @@ class slcDict:
                 box = (0, 0, width, length)
             if atr['PROCESSOR'] == 'isce3':
                 with h5py.File(self.datasetDict[family], 'r') as sds:
-                    data = sds['science']['SENTINEL1']['CSLC']['grids'][atr['POLARIZATION']][box[1]:box[3], box[0]:box[2]]
+                    data = sds['data'][atr['POLARIZATION']][box[1]:box[3], box[0]:box[2]]
             else:
                 data = readfile.read_hdf5_file(fname, datasetName=datasetName, box=box)
             return data, atr

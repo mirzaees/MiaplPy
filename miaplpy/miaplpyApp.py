@@ -194,7 +194,7 @@ class miaplpyTimeSeriesAnalysis(TimeSeriesAnalysis):
             self.sensor_type = 'tops'
 
         os.chdir(self.workDir)
-        shutil.rmtree(self.workDir + '/pic')
+        # shutil.rmtree(self.workDir + '/pic')
         return
 
     def _read_template_miaplpy(self):
@@ -507,14 +507,14 @@ class miaplpyTimeSeriesAnalysis(TimeSeriesAnalysis):
         num_cpu = os.cpu_count()
         num_lin = 0
         for pair in self.pairs:
-            out_dir = os.path.join(self.ifgram_dir, pair[0] + '_' + pair[1])
+            #out_dir = os.path.join(self.ifgram_dir, pair[0] + '_' + pair[1])
             #os.makedirs(out_dir, exist_ok='True')
 
             scp_args = '--reference {a1} --secondary {a2} --output_dir {a3} --azimuth_looks {a4} ' \
                        '--range_looks {a5} --filter_strength {a6} ' \
                        '--stack_prefix {a7} --stack {a8}'.format(a1=pair[0],
                                                            a2=pair[1],
-                                                           a3=out_dir, a4=self.azimuth_look,
+                                                           a3=self.ifgram_dir, a4=self.azimuth_look,
                                                            a5=self.range_look,
                                                            a6=self.template['miaplpy.interferograms.filterStrength'],
                                                            a7=self.sensor_type,

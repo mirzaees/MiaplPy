@@ -1104,7 +1104,7 @@ def read_subset_template2box(template_file):
         opts = [i.strip().replace('[','').replace(']','') for i in tmpl[key_lalo].split(',')]
         lat0, lat1 = sorted([float(i.strip()) for i in opts[0].split(':')])
         lon0, lon1 = sorted([float(i.strip()) for i in opts[1].split(':')])
-        geo_box = (lon0, lat1, lon1, lat0)
+        geo_box = (lon0, lat0, lon1, lat1)
     except:
         geo_box = None
 
@@ -1123,7 +1123,6 @@ def read_subset_template2box(template_file):
 def read_subset_box(inpsDict):
     import mintpy.load_data as mld
     from mintpy import subset
-
     # Read subset info from template
     inpsDict['box'] = None
     inpsDict['box4geo_lut'] = None
@@ -1133,48 +1132,53 @@ def read_subset_box(inpsDict):
         src_file = sorted(glob.glob(os.path.dirname(inpsDict['miaplpy.load.slcFile']) + '/static_layers*.h5'))[0]
         metadata = read_attribute(src_file.split('.')[-2] + '.rsc', metafile_ext='.rsc')
         with h5py.File(src_file, 'r') as f:
-            dsg = f['science']['SENTINEL1']['CSLC']['grids']['static_layers']['projection'].attrs
+            dsg = f['data']['projection'].attrs
             crs = CRS.from_wkt(dsg['spatial_ref'].decode("utf-8"))
-            XX = f['science']['SENTINEL1']['CSLC']['grids']['static_layers']['x_coordinates'][()]
-            YY = f['science']['SENTINEL1']['CSLC']['grids']['static_layers']['y_coordinates'][()]
-            ds = f['science']['SENTINEL1']['CSLC']['grids']['static_layers']['x'][()]
-            ymax, xmax = ds.shape
-            xmin, ymin = 0, 0
+            XX = f['data']['x_coordinates'][()]
+            YY = f['data']['y_coordinates'][()]
+            ds = f['quality_assurance']['statistics']['static_layers']
+            latmax, lonmax = float(ds['y']['max'][()]), float(ds['x']['max'][()])   # degrees
+            lonmin, latmin = float(ds['x']['min'][()]), float(ds['y']['min'][()])   # degrees
             x_origin = XX[0]
             y_origin = YY[-1]
-            pixel_width = float(f['science']['SENTINEL1']['CSLC']['grids']['static_layers']['x_spacing'][()])
-            pixel_height = float(f['science']['SENTINEL1']['CSLC']['grids']['static_layers']['y_spacing'][()])
+            width = len(XX)
+            length = len(YY)
+            pixel_width = float(f['data']['x_spacing'][()])
+            pixel_height = float(f['data']['y_spacing'][()])
             gt = (x_origin, pixel_width, 0, y_origin, 0, pixel_height)
+            print(gt)
 
-        if geo_box is not None:
-            geo_box = (geo_box[0], geo_box[3], geo_box[2], geo_box[1])
-            bb_utm = bbox_to_utm(geo_box, epsg_src=4326, epsg_dst=crs.to_epsg())
-            xmin = abs(int((bb_utm[0] - gt[0]) / gt[1]))
-            xmax = abs(int((bb_utm[2] - gt[0]) / gt[1]))
-            ymin = abs(int((bb_utm[1] - gt[3]) / gt[5]))
-            ymax = abs(int((bb_utm[3] - gt[3]) / gt[5]))
+        if geo_box is None:
+            geo_box = (lonmin, latmin, lonmax, latmax)
 
-            if ymax > ds.shape[0]:
-                ymax = ds.shape[0]
-                bb_utm3 = ymax * gt[5] + gt[3]
-                bb_utm = (bb_utm[0], bb_utm[1], bb_utm[2], bb_utm3)
+        bb_utm = bbox_to_utm(geo_box, epsg_src=4326, epsg_dst=crs.to_epsg())
+        xmin = int((bb_utm[0] - gt[0]) / gt[1])
+        xmax = int((bb_utm[2] - gt[0]) / gt[1])
+        ymin = int((bb_utm[3] - gt[3]) / gt[5])
+        ymax = int((bb_utm[1] - gt[3]) / gt[5])
 
-            if xmax > ds.shape[1]:
-                xmax = ds.shape[1]
-                bb_utm2 = xmax * gt[1] + gt[0]
-                bb_utm = (bb_utm[0], bb_utm[1], bb_utm2, bb_utm[3])
+        if ymax > length:
+            ymax = length
+            bb_utm1 = ymax * gt[5] + gt[3]
+            bb_utm = (bb_utm[0], bb_utm1, bb_utm[2], bb_utm[3])
 
-            if ymin < 0:
-                ymin = 0
-                bb_utm1 = gt[3]
-                bb_utm = (bb_utm[0], bb_utm1, bb_utm[2], bb_utm[3])
+        if xmax > width:
+            xmax = width
+            bb_utm2 = xmax * gt[1] + gt[0]
+            bb_utm = (bb_utm[0], bb_utm[1], bb_utm2, bb_utm[3])
 
-            if xmin < 0:
-                xmin = 0
-                bb_utm0 = gt[0]
-                bb_utm = (bb_utm0, bb_utm[1], bb_utm[2], bb_utm[3])
+        if ymin < 0:
+            ymin = 0
+            bb_utm3 = gt[3]
+            bb_utm = (bb_utm[0], bb_utm[1], bb_utm[2], bb_utm3)
+
+        if xmin < 0:
+            xmin = 0
+            bb_utm0 = gt[0]
+            bb_utm = (bb_utm0, bb_utm[1], bb_utm[2], bb_utm[3])
 
         pix_box = [xmin, ymin, xmax, ymax]
+        print('utils: ', pix_box)
         
         pathKey = [i for i in datasetName2templateKey.values()
                    if i in inpsDict.keys()][0]

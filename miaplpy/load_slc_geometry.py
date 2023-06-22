@@ -85,7 +85,6 @@ def main(iargs=None):
     # skip data writing for aria and isce3 as it is included in prep_aria and prep_isce3
     if iDict['processor'] in ['aria']:
         return
-
     iDict = mut.read_subset_box(iDict)
     #iDict = mld.read_subset_box(iDict)
 
@@ -112,6 +111,7 @@ def main(iargs=None):
     if any([stackObj, geomRadarObj, geomGeoObj]) and not os.path.isdir(inps.out_dir):
         os.makedirs(inps.out_dir)
         print('create directory: {}'.format(inps.out_dir))
+
 
     # write
     if stackObj and mld.run_or_skip(inps.out_file[0], stackObj, box, updateMode=updateMode,

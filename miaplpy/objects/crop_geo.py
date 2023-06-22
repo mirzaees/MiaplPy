@@ -9,7 +9,6 @@ import rasterio
 from rasterio.windows import Window
 from typing import Optional, List, Tuple, Union
 from pathlib import Path
-import xarray as xr
 import h5py
 from osgeo import gdal, osr
 from os import fspath
@@ -53,19 +52,22 @@ HDF5_OPTS = dict(
 def create_grid_mapping(group, crs: CRS, gt: list):
     """Set up the grid mapping variable."""
     # https://github.com/corteva/rioxarray/blob/21284f67db536d9c104aa872ab0bbc261259e59e/rioxarray/rioxarray.py#L34
-    dset = group.create_dataset('spatial_ref', (), dtype=int)
-    dset.attrs.update(crs.to_cf())
-    # Also add the GeoTransform
-    gt_string = " ".join([str(x) for x in gt])
-    dset.attrs.update(
-        dict(
-            GeoTransform=gt_string,
-            units="unitless",
-            long_name=(
-                "Dummy variable containing geo-referencing metadata in attributes"
-            ),
+    if not 'spatial_ref' in group.keys():
+        dset = group.create_dataset('spatial_ref', (), dtype=int)
+        dset.attrs.update(crs.to_cf())
+        # Also add the GeoTransform
+        gt_string = " ".join([str(x) for x in gt])
+        dset.attrs.update(
+            dict(
+                GeoTransform=gt_string,
+                units="unitless",
+                long_name=(
+                    "Dummy variable containing geo-referencing metadata in attributes"
+                ),
+            )
         )
-    )
+    else:
+        dset = group['spatial_ref']
 
     return dset
 
@@ -82,14 +84,19 @@ def create_tyx_dsets(
     #if not group.dimensions:
     #    group.dimensions = dict(time=times.size, y=y.size, x=x.size)
     # Create the datasets
-    t_ds = group.create_dataset("time", (len(times),), data=times, dtype=float)
-    y_ds = group.create_dataset("y", (len(y),), data=y, dtype=float)
-    x_ds = group.create_dataset("x", (len(x),), data=x, dtype=float)
+    if not 'time' in group.keys():
+        t_ds = group.create_dataset("time", (len(times),), data=times, dtype=float)
+        y_ds = group.create_dataset("y", (len(y),), data=y, dtype=float)
+        x_ds = group.create_dataset("x", (len(x),), data=x, dtype=float)
 
-    t_ds.attrs["standard_name"] = "time"
-    t_ds.attrs["long_name"] = "time"
-    t_ds.attrs["calendar"] = calendar
-    t_ds.attrs["units"] = units
+        t_ds.attrs["standard_name"] = "time"
+        t_ds.attrs["long_name"] = "time"
+        t_ds.attrs["calendar"] = calendar
+        t_ds.attrs["units"] = units
+    else:
+        t_ds = group['time']
+        y_ds = group['y']
+        x_ds = group['x']
 
     for name, ds in zip(["y", "x"], [y_ds, x_ds]):
         ds.attrs["standard_name"] = f"projection_{name}_coordinate"
@@ -180,35 +187,29 @@ class cropSLC:
         dsname0 = self.pairsDict[self.dates[0]].datasetDict['slc']
         self.geo_bbox = geo_bbox
         self.bb_utm = None
-        self.crs, self.geotransform, self.extent, self.shape = self.get_transform(dsname0)
-        #if geo_bbox is None:
-        #    self.bb_utm = self.extent
-        #else:
-        #    self.bb_utm = bbox_to_utm(self.geo_bbox, epsg_src=4326, epsg_dst=self.crs.to_epsg())
-        #
+        self.crs, self.geotransform, self.shape = self.get_transform(dsname0)
         self.length, self.width = self.shape
         self.rdr_bbox = self.get_rdr_bbox()
         self.lengthc, self.widthc = self.get_size()
 
-
-
     def get_transform(self, src_file):
-        #geogrid = GeoGrid
-        dask_chunks = (1, 128 * 10, 128 * 10)
-        inp_file = 'NETCDF:{}:/science/SENTINEL1/CSLC/grids/VV'.format(src_file)
-        da_ref = rioxarray.open_rasterio(inp_file, chunks=dask_chunks).sel(band=1)
-        shape = da_ref.shape
+        with h5py.File(src_file, 'r') as ds:
+            dsg = ds['data']['projection'].attrs
+            shape = (ds['data']['y_coordinates'].shape[0], ds['data']['x_coordinates'].shape[0])
+            crs = CRS.from_wkt(dsg['spatial_ref'].decode("utf-8"))
+            x_first = float(ds['data']['x_coordinates'][()][0])
+            y_first = float(ds['data']['y_coordinates'][()][-1])
+            x_step = float(ds['data']['x_spacing'][()])
+            y_step = float(ds['data']['y_spacing'][()])
+            geotransform = (x_first, x_step, 0, y_first, 0, y_step)
         if self.geo_bbox is None:
-            self.bb_utm = da_ref.rio.bounds()
+            x_last = float(ds['data']['x_coordinates'][()][-1])
+            y_last = float(ds['data']['y_coordinates'][()][0])
+            self.bb_utm = (x_first, y_first, x_last, y_last)
         else:
-            self.bb_utm = bbox_to_utm(self.geo_bbox, epsg_src=4326, epsg_dst=da_ref.rio.crs.to_epsg())
-        da_ref = da_ref.sel(x=slice(self.bb_utm[0], self.bb_utm[2]), y=slice(self.bb_utm[3], self.bb_utm[1]))
-        # crs = da_ref.rio.crs
-        gt = da_ref.rio.transform()
-        geotransform = (gt[2], gt[0], 0, gt[5], 0, gt[4])
-        extent = da_ref.rio.bounds()
-        crs = CRS.from_epsg(da_ref.rio.crs.to_epsg())
-        return crs, geotransform, extent, shape
+            self.bb_utm = bbox_to_utm(self.geo_bbox, epsg_src=4326, epsg_dst=crs.to_epsg())
+
+        return crs, geotransform, shape
 
     def get_subset_transform(self):
         # Define the cropping extent
@@ -223,15 +224,16 @@ class cropSLC:
 
     def get_rdr_bbox(self):
         # calculate the image coordinates
-        col1 = abs(int((self.bb_utm[0] - self.geotransform[0]) / self.geotransform[1]))
-        col2 = int(abs(np.ceil((self.bb_utm[2] - self.geotransform[0]) / self.geotransform[1])))
-        row2 = int(abs(np.ceil((self.bb_utm[1] - self.geotransform[3]) / self.geotransform[5])))
-        row1 = abs(int((self.bb_utm[3] - self.geotransform[3]) / self.geotransform[5]))
+        col1 = int((self.bb_utm[0] - self.geotransform[0]) / self.geotransform[1])
+        col2 = int((self.bb_utm[2] - self.geotransform[0]) / self.geotransform[1])
+        row1 = int((self.bb_utm[3] - self.geotransform[3]) / self.geotransform[5])
+        row2 = int((self.bb_utm[1] - self.geotransform[3]) / self.geotransform[5])
 
         if col2 > self.width:
             col2 = self.width
             bb_utm2 = col2 * self.geotransform[1] + self.geotransform[0]
             self.bb_utm = (self.bb_utm[0], self.bb_utm[1], bb_utm2, self.bb_utm[3])
+
         if row2 > self.length:
             row2 = self.length
             bb_utm1 = row2 * self.geotransform[5] + self.geotransform[3]
@@ -244,7 +246,9 @@ class cropSLC:
         if row1 < 0:
             row1 = 0
             bb_utm3 = self.geotransform[3]
-            self.bb_utm = (self.bb_utm[0], self.bb_utm[1], self.bb_utm[2], bb_utm3)
+            self.bb_utm = (self.bb_utm[0],self.bb_utm[1], self.bb_utm[2], bb_utm3)
+
+        print('crop_geo: ', [col1, row1, col2, row2])
         return col1, row1, col2, row2
 
     def get_size(self):
@@ -260,7 +264,7 @@ class cropSLC:
 
     def read_subset(self, slc_file):
         with h5py.File(slc_file, 'r') as f:
-            subset_slc = f['science']['SENTINEL1']['CSLC']['grids']['VV'][self.rdr_bbox[1]:self.rdr_bbox[3],
+            subset_slc = f['data']['VV'][self.rdr_bbox[1]:self.rdr_bbox[3],
                   self.rdr_bbox[0]:self.rdr_bbox[2]]
 
         return subset_slc
@@ -272,7 +276,7 @@ class cropSLC:
             self.metadata.pop('UNIT')
         return self.metadata
 
-    def write2hdf5(self, outputFile='slcStack.nc', access_mode='a', compression=None, extra_metadata=None):
+    def write2hdf5(self, outputFile='slcStack.h5', access_mode='a', compression=None, extra_metadata=None):
 
         dsNames = [i for i in slcDatasetNames if i in self.dsNames]
         maxDigit = max([len(i) for i in dsNames])
@@ -282,6 +286,7 @@ class cropSLC:
 
         f = h5py.File(self.outputFile, access_mode)
         print('create HDF5 file {} with {} mode'.format(self.outputFile, access_mode))
+
         create_grid_mapping(group=f, crs=self.crs, gt=list(self.geotransform))
         create_tyx_dsets(group=f, gt=list(self.geotransform), times=self.dates, shape=(self.lengthc, self.widthc))
 

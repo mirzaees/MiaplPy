@@ -31,8 +31,8 @@ CPX_ZERO = np.complex64(0.0)
 dataType = np.float32
 
 dsdict_isce3 = {'height':'z', 'xCoord':'x', 'yCoord':'y',
-          'incidenceAngle':'incidence',
-          'azimuthAngle':'heading', 'shadowMask':'layover_shadow_mask'}
+          'incidenceAngle':'incidence_angle',
+          'azimuthAngle':'heading_angle', 'shadowMask':'layover_shadow_mask'}
 
 
 class geometryDict(GDict):
@@ -67,7 +67,7 @@ class geometryDict(GDict):
             metadata = read_attribute(self.file.split('.')[0] + '.rsc', metafile_ext='.rsc')
             metadata['FILE_TYPE'] = 'geometry'
             with h5py.File(self.file, 'r') as gds:
-                gds_meta = gds['science']['SENTINEL1']['CSLC']['grids']['static_layers']
+                gds_meta = gds['data']
                 data = gds_meta[dsdict_isce3[family]][box[1]:box[3], box[0]:box[2]]
 
         else:

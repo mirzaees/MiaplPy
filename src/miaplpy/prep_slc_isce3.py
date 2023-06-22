@@ -6,6 +6,7 @@
 ############################################################
 
 import os
+import sys
 import time
 
 import h5py
@@ -154,20 +155,25 @@ def read_subset_box(template_file, meta):
         pixel_width = float(meta["X_STEP"])
         pixel_height = float(meta["Y_STEP"])
         gt = (x_origin, pixel_width, 0, y_origin, 0, pixel_height)
-
         # geo_box --> pix_box
         if geo_box is not None:
-            geo_box = (geo_box[0], geo_box[3], geo_box[2], geo_box[1])
             bb_utm = bbox_to_utm(geo_box, epsg_src=4326, epsg_dst=crs.to_epsg())
-            xmin = abs(int((bb_utm[0] - gt[0]) / gt[1]))
-            xmax = abs(int((bb_utm[2] - gt[0]) / gt[1]))
-            ymin = abs(int((bb_utm[1] - gt[3]) / gt[5]))
-            ymax = abs(int((bb_utm[3] - gt[3]) / gt[5]))
+            xmin = int((bb_utm[0] - gt[0]) / gt[1])
+            xmax = int((bb_utm[2] - gt[0]) / gt[1])
+            ymin = int((bb_utm[3] - gt[3]) / gt[5])
+            ymax = int((bb_utm[1] - gt[3]) / gt[5])
+
+            if (ymin < 0 and ymax < 0) or (ymin > meta['LENGTH'] and ymax > meta['LENGTH']):
+                raise ValueError('Subset latitude out of range!!!')
+                sys.exit()
+            if (xmin < 0 and xmax < 0) or (xmin > meta['WIDTH'] and xmax > meta['WIDTH']):
+                raise ValueError('Subset longitude out of range!!!')
+                sys.exit()
 
             if ymax > meta['LENGTH']:
                 ymax = meta['LENGTH']
-                bb_utm3 = ymax * gt[5] + gt[3]
-                bb_utm = (bb_utm[0], bb_utm[1], bb_utm[2], bb_utm3)
+                bb_utm1 = ymax * gt[5] + gt[3]
+                bb_utm = (bb_utm[0], bb_utm1, bb_utm[2], bb_utm[3])
 
             if xmax > meta['WIDTH']:
                 xmax = meta['WIDTH']
@@ -181,10 +187,11 @@ def read_subset_box(template_file, meta):
 
             if ymin < 0:
                 ymin = 0
-                bb_utm1 = gt[3]
-                bb_utm = (bb_utm[0], bb_utm1, bb_utm[2], bb_utm[3])
+                bb_utm3 = gt[3]
+                bb_utm = (bb_utm[0], bb_utm[1], bb_utm[2], bb_utm3)
 
             pix_box = (xmin, ymin, xmax, ymax)
+            print('prep_slc_isce3: ', pix_box)
             #coord = ut.coordinate(meta)
             #pix_box = coord.bbox_geo2radar(geo_box)
             #pix_box = coord.check_box_within_data_coverage(pix_box)
@@ -212,33 +219,28 @@ def extract_metadata(h5_file):
     meta = {}
 
     with h5py.File(h5_file, 'r') as ds:
-        dsg = ds['science']['SENTINEL1']['CSLC']['grids']['static_layers']['projection'].attrs
+        dsg = ds['data']['projection'].attrs
         meta['spatial_ref'] = dsg['spatial_ref']
-        metadata = ds['science']['SENTINEL1']['CSLC']['metadata']
-        grids = ds['science']['SENTINEL1']['CSLC']['grids']
-        meta['POLARIZATION'] = metadata['processing_information']['s1_burst_metadata']['polarization'][()].decode('utf-8')
-        meta['LENGTH'] = grids['static_layers']['x'].shape[0]
-        meta['WIDTH'] = grids['static_layers']['x'].shape[1]
-        #meta['LENGTH'] = metadata['processing_information']['s1_burst_metadata']['shape'][()][0]
-        meta['WAVELENGTH'] = float(metadata['processing_information']['s1_burst_metadata']['wavelength'][()])
-        #meta['WIDTH'] = metadata['processing_information']['s1_burst_metadata']['shape'][()][1]
+        metadata = ds['metadata']
+        meta['POLARIZATION'] = metadata['processing_information']['input_burst_metadata']['polarization'][()].decode('utf-8')
+        meta['LENGTH'] = ds['data']['x'].shape[0]
+        meta['WIDTH'] = ds['data']['x'].shape[1]
+        meta['WAVELENGTH'] = float(metadata['processing_information']['input_burst_metadata']['wavelength'][()])
         meta["ORBIT_DIRECTION"] = metadata['orbit']['orbit_direction'][()].decode('utf-8')
 
-        meta["STARTING_RANGE"] = float(metadata['processing_information']['s1_burst_metadata']['starting_range'][()])
-        meta["RANGE_PIXEL_SIZE"] = metadata['processing_information']['s1_burst_metadata']['range_pixel_spacing'][()]
-        x_step = float(grids['static_layers']['x_spacing'][()])
-        y_step = float(grids['static_layers']['y_spacing'][()])
-        x_first = float(grids['static_layers']['x_coordinates'][()][0])
-        y_first = float(grids['static_layers']['y_coordinates'][()][-1])
+        meta["STARTING_RANGE"] = float(metadata['processing_information']['input_burst_metadata']['starting_range'][()])
+        meta["RANGE_PIXEL_SIZE"] = metadata['processing_information']['input_burst_metadata']['range_pixel_spacing'][()]
+        x_step = float(ds['data']['x_spacing'][()])
+        y_step = float(ds['data']['y_spacing'][()])
+        x_first = float(ds['data']['x_coordinates'][()][0])
+        y_first = float(ds['data']['y_coordinates'][()][-1])
         datestr = metadata['orbit']['reference_epoch'][()].decode("utf-8")
         utc = datetime.strptime(datestr[0:-3], '%Y-%m-%d %H:%M:%S.%f')
         meta["CENTER_LINE_UTC"] = utc.hour * 3600.0 + utc.minute * 60.0 + utc.second + utc.microsecond * (1e-6)  # Starting line in fact
-        S = min(grids['static_layers']['y_coordinates'][:])
-        N = max(grids['static_layers']['y_coordinates'][:])
-        E = min(grids['static_layers']['x_coordinates'][:])
-        W = max(grids['static_layers']['x_coordinates'][:])
-
-
+        S = min(ds['data']['y_coordinates'][:])
+        N = max(ds['data']['y_coordinates'][:])
+        E = max(ds['data']['x_coordinates'][:])
+        W = min(ds['data']['x_coordinates'][:])
 
     if meta["ORBIT_DIRECTION"].startswith("D"):
         meta["HEADING"] = -168
@@ -575,7 +577,7 @@ def load_isce3(iargs=None):
     metadata = extract_metadata(metaFile)
     #inps.template_file = None
     box, metadata = read_subset_box(inps.template_file[0], metadata)
-
+   
     # convert all value to string format
     for key, value in metadata.items():
         metadata[key] = str(value)

@@ -252,7 +252,6 @@ class cropSLC:
             self.bb_utm = (x_first, y_first, x_last, y_last)
         else:
             self.bb_utm = bbox_to_utm(self.geo_bbox, epsg_src=4326, epsg_dst=crs.to_epsg())
-
         bounds = get_raster_bounds(xcoord, ycoord, self.bb_utm)
 
         xindex = np.where(np.logical_and(xcoord >= bounds[0], xcoord <= bounds[2]))[0]
@@ -299,7 +298,9 @@ class cropSLC:
         if row1 < 0:
             row1 = 0
             bb_utm3 = self.geotransform[3]
+
             self.bb_utm = (self.bb_utm[0], self.bb_utm[1], self.bb_utm[2], bb_utm3)
+
 
         print('crop_geo: ', [col1, row1, col2, row2])
         return col1, row1, col2, row2

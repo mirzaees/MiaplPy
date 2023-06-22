@@ -223,7 +223,7 @@ cdef class CPhaseLink:
                                     maxshape=(None, self.length, self.width),
                                     chunks=True,
                                     dtype=np.float32)
-                
+                '''
                 if b'real_time' == self.phase_linking_method[0:9]:
                     RSLC.create_dataset('phase_seq',
                                         shape=(self.n_image, self.length, self.width),
@@ -236,7 +236,7 @@ cdef class CPhaseLink:
                                         maxshape=(None, self.length, self.width),
                                         chunks=True,
                                         dtype=np.float32)
-
+                '''
                 RSLC.create_dataset('shp',
                                     shape=(self.length, self.width),
                                     maxshape=(self.length, self.width),
@@ -334,6 +334,24 @@ cdef class CPhaseLink:
         #grp.attrs["pixel_size_y"] = self.pixel_height
         return
 
+    def set_projection_gdal1_int(self, cnp.ndarray[int, ndim=2] data, int bands, bytes output, str description,
+                             object projection, tuple geotransform):
+        cdef object driver, dataset, band1, target_crs
+        driver = gdal.GetDriverByName('ENVI')
+        dataset = driver.Create(output, self.width, self.length, 1, gdal.GDT_Int16, DEFAULT_ENVI_OPTIONS)
+        dataset.SetGeoTransform(list(geotransform))
+        dataset.SetProjection(projection.to_wkt()) #target_crs.ExportToWkt())
+        band1 = dataset.GetRasterBand(1)
+        band1.SetDescription(description)
+        gdal_array.BandWriteArray(band1, data, xoff=0, yoff=0)
+        # band1.WriteArray(data, xoff=0, yoff=0)
+        band1.SetNoDataValue(np.nan)
+
+        dataset.FlushCache()
+        dataset = None
+
+        return
+
     def set_projection_gdal1(self, cnp.ndarray[float, ndim=2] data, int bands, bytes output, str description,
                              object projection, tuple geotransform):
         cdef object driver, dataset, band1, target_crs
@@ -414,8 +432,7 @@ cdef class CPhaseLink:
                 shp = np.load(patch_dir.decode('UTF-8') + '/shp.npy', allow_pickle=True)
                 mask_ps = np.load(patch_dir.decode('UTF-8') + '/mask_ps.npy', allow_pickle=True)
                 ps_prod = np.load(patch_dir.decode('UTF-8') + '/ps_products.npy', allow_pickle=True)
-                # if b'real_time' == self.phase_linking_method[0:9]:
-                #     rslc_ref_seq = np.load(patch_dir.decode('UTF-8') + '/phase_ref_seq.npy', allow_pickle=True)
+                reference_index = np.load(patch_dir.decode('UTF-8') + '/reference_index.npy', allow_pickle=True)
 
                 temp_coh[temp_coh<0] = 0
 
@@ -461,6 +478,9 @@ cdef class CPhaseLink:
             temp_coh_file = self.out_dir + b'/tempCoh_full'
             self.set_projection_gdal1(fhandle['temporalCoherence'][1, :, :], 1,
                                       temp_coh_file, 'Temporal coherence full', projection, geotransform)
+            ref_index_file = self.out_dir + b'/reference_index'
+            self.set_projection_gdal1_int(reference_index_map, 1,
+                                      ref_index_file, 'Reference index map', projection, geotransform)
 
             ##
             ref_index_file = self.out_dir + b'/reference_index'

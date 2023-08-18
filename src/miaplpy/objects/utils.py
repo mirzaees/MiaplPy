@@ -12,9 +12,11 @@ from osgeo import gdal
 import datetime
 import re
 from pyproj import CRS
-from compass.utils.helpers import bbox_to_utm
+#from compass.utils.helpers import bbox_to_utm
 import netCDF4
 import numpy as np
+from pyproj.transformer import Transformer
+
 from miaplpy.objects.arg_parser import MiaplPyParser
 from mintpy.utils import readfile, ptime, utils as ut
 from mintpy.objects import (
@@ -1122,6 +1124,44 @@ def read_subset_template2box(template_file):
     return pix_box, geo_box
 
 
+def bbox_to_utm_sco(bounds, src_epsg, dst_epsg):
+    t = Transformer.from_crs(src_epsg, dst_epsg, always_xy=True)
+    left, bottom, right, top = bounds
+    bbox = (*t.transform(left, bottom), *t.transform(right, top))  # type: ignore
+    return bbox
+
+
+def bbox_to_utm(bbox, epsg_dst, epsg_src=4326):
+    """Convert a list of points to a specified UTM coordinate system.
+        If epsg_src is 4326 (lat/lon), assumes points_xy are in degrees.
+    """
+    xmin, ymin, xmax, ymax = bbox
+    t = Transformer.from_crs(epsg_src, epsg_dst, always_xy=True)
+    xs = [xmin, xmax]
+    ys = [ymin, ymax]
+    xt, yt = t.transform(xs, ys)
+    xys = list(zip(xt, yt))
+    return *xys[0], *xys[1]
+
+def get_raster_bounds(xcoord, ycoord, utm_bbox=None):
+    """Get common bounds among all data"""
+    x_bounds = []
+    y_bounds = []
+
+    west = min(xcoord)
+    east = max(xcoord)
+    north = max(ycoord)
+    south = min(ycoord)
+
+    x_bounds.append([west, east])
+    y_bounds.append([south, north])
+    if not utm_bbox is None:
+        x_bounds.append([utm_bbox[0], utm_bbox[2]])
+        y_bounds.append([utm_bbox[1], utm_bbox[3]])
+
+    bounds = max(x_bounds)[0], max(y_bounds)[0], min(x_bounds)[1], min(y_bounds)[1]
+    return bounds
+
 def read_subset_box(inpsDict):
     import mintpy.load_data as mld
     from mintpy import subset
@@ -1136,50 +1176,35 @@ def read_subset_box(inpsDict):
         with h5py.File(src_file, 'r') as f:
             dsg = f['data']['projection'].attrs
             crs = CRS.from_wkt(dsg['spatial_ref'].decode("utf-8"))
-            XX = f['data']['x_coordinates'][()]
-            YY = f['data']['y_coordinates'][()]
+            xcoord = f['data']['x_coordinates'][()]
+            ycoord = f['data']['y_coordinates'][()]
             ds = f['quality_assurance']['statistics']['static_layers']
             latmax, lonmax = float(ds['y']['max'][()]), float(ds['x']['max'][()])   # degrees
             lonmin, latmin = float(ds['x']['min'][()]), float(ds['y']['min'][()])   # degrees
-            x_origin = XX[0]
-            y_origin = YY[-1]
-            width = len(XX)
-            length = len(YY)
+            x_first = min(xcoord)
+            y_first = max(ycoord)
+            #x_last = max(xcoord)
+            #y_last = min(ycoord)
+            #width = len(xcoord)
+            #length = len(ycoord)
             pixel_width = float(f['data']['x_spacing'][()])
             pixel_height = float(f['data']['y_spacing'][()])
-            gt = (x_origin, pixel_width, 0, y_origin, 0, pixel_height)
+            gt = (x_first, pixel_width, 0, y_first, 0, pixel_height)
             print(gt)
 
         if geo_box is None:
             geo_box = (lonmin, latmin, lonmax, latmax)
 
         bb_utm = bbox_to_utm(geo_box, epsg_src=4326, epsg_dst=crs.to_epsg())
-        xmin = int((bb_utm[0] - gt[0]) / gt[1])
-        xmax = int((bb_utm[2] - gt[0]) / gt[1])
-        ymin = int((bb_utm[3] - gt[3]) / gt[5])
-        ymax = int((bb_utm[1] - gt[3]) / gt[5])
 
-        if ymax > length:
-            ymax = length
-            bb_utm1 = ymax * gt[5] + gt[3]
-            bb_utm = (bb_utm[0], bb_utm1, bb_utm[2], bb_utm[3])
+        bounds = get_raster_bounds(xcoord, ycoord, bb_utm)
 
-        if xmax > width:
-            xmax = width
-            bb_utm2 = xmax * gt[1] + gt[0]
-            bb_utm = (bb_utm[0], bb_utm[1], bb_utm2, bb_utm[3])
+        xindex = np.where(np.logical_and(xcoord >= bounds[0], xcoord <= bounds[2]))[0]
+        yindex = np.where(np.logical_and(ycoord >= bounds[1], ycoord <= bounds[3]))[0]
+        row1, row2 = min(yindex), max(yindex)
+        col1, col2 = min(xindex), max(xindex)
 
-        if ymin < 0:
-            ymin = 0
-            bb_utm3 = gt[3]
-            bb_utm = (bb_utm[0], bb_utm[1], bb_utm[2], bb_utm3)
-
-        if xmin < 0:
-            xmin = 0
-            bb_utm0 = gt[0]
-            bb_utm = (bb_utm0, bb_utm[1], bb_utm[2], bb_utm[3])
-
-        pix_box = [xmin, ymin, xmax, ymax]
+        pix_box = [col1, row1, col2, row2]
         print('utils: ', pix_box)
         
         pathKey = [i for i in datasetName2templateKey.values()
@@ -1494,7 +1519,6 @@ def ks_lut(N1, N2, alpha=0.05):
         alpha_c[lamda == value] = pvalue
     critical_distance = distances[alpha_c <= (alpha)]
     return np.min(critical_distance)
-
 
 
 def est_corr(CCGsam):

@@ -13,6 +13,7 @@ import h5py
 from osgeo import gdal, osr
 from os import fspath
 import datetime
+
 from pyproj import CRS
 from pyproj.transformer import Transformer
 
@@ -214,6 +215,7 @@ def bbox_to_utm(bbox, epsg_dst, epsg_src=4326):
     xys = list(zip(xt, yt))
     return *xys[0], *xys[1]
 
+
 class cropSLC:
     def __init__(self, pairs_dict: Optional[List[Path]] = None,
                  geo_bbox: Optional[Tuple[float, float, float, float]] = None):
@@ -234,6 +236,7 @@ class cropSLC:
         self.lengthc, self.widthc = self.get_size()
 
     def get_transform(self, src_file):
+        import pdb; pdb.set_trace()
         with h5py.File(src_file, 'r') as ds:
             dsg = ds['data']['projection'].attrs
             xcoord = ds['data']['x_coordinates'][()]
@@ -252,6 +255,15 @@ class cropSLC:
             self.bb_utm = (x_first, y_first, x_last, y_last)
         else:
             self.bb_utm = bbox_to_utm(self.geo_bbox, epsg_src=4326, epsg_dst=crs.to_epsg())
+        bounds = get_raster_bounds(xcoord, ycoord, self.bb_utm)
+
+        xindex = np.where(np.logical_and(xcoord >= bounds[0], xcoord <= bounds[2]))[0]
+        yindex = np.where(np.logical_and(ycoord >= bounds[1], ycoord <= bounds[3]))[0]
+        row1, row2 = min(yindex), max(yindex)
+        col1, col2 = min(xindex), max(xindex)
+
+        self.rdr_bbox = (col1, row1, col2, row2)
+
         bounds = get_raster_bounds(xcoord, ycoord, self.bb_utm)
 
         xindex = np.where(np.logical_and(xcoord >= bounds[0], xcoord <= bounds[2]))[0]
@@ -391,7 +403,6 @@ class cropSLC:
                                                                           t=str(dsDataType),
                                                                           s=dsShape))
 
-
         data = np.array(self.dates, dtype=dsDataType)
         if not dsName in f.keys():
             f.create_dataset(dsName, data=data)
@@ -425,3 +436,4 @@ class cropSLC:
 
         print('Finished writing to {}'.format(self.outputFile))
         return self.outputFile
+

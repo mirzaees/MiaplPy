@@ -133,6 +133,7 @@ def phase_invert(inps, inversionObj):
 
     return
 
+
 def concatenate_patches(inversionObj):
     completed = True
     for box in inversionObj.box_list:

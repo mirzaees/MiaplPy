@@ -1290,14 +1290,14 @@ cdef cnp.ndarray[float complex, ndim=3] read_padded(object slcStackObj, cnp.ndar
 
     patch_slc_images = slcStackObj.read(datasetName='slc', box=box, print_msg=False)
 
-    for i in range(0, box[3] - box[1]):
-        for t in range(0, box[2] - box[0]):
-            if not np.isnan(patch_slc_images[:, i, t]).all():
-                if np.isnan(patch_slc_images[:, i, t]).any():
-                    y = patch_slc_images[:, i, t].flatten()
-                    nans, x = nan_helper(patch_slc_images[:, i, t].flatten())
-                    y[nans] = np.interp(x(nans), x(~nans), y[~nans])
-                    patch_slc_images[:, i, t] = y  #np.nan_to_num(patch_slc_images[:, i, t], copy=False)
+    #for i in range(0, box[3] - box[1]):
+    #    for t in range(0, box[2] - box[0]):
+    #        if not np.isnan(patch_slc_images[:, i, t]).all():
+    #            if np.isnan(patch_slc_images[:, i, t]).any():
+    #                y = patch_slc_images[:, i, t].flatten()
+    #                nans, x = nan_helper(patch_slc_images[:, i, t].flatten())
+    #                y[nans] = np.interp(x(nans), x(~nans), y[~nans])
+    #                patch_slc_images[:, i, t] = y  #np.nan_to_num(patch_slc_images[:, i, t], copy=False)
 
     patch_slc_images_padded[:, :, :] = np.pad(patch_slc_images, padding, mode='empty')[:, :, :]
     return patch_slc_images_padded

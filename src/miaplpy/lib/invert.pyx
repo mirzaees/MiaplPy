@@ -29,18 +29,6 @@ DEFAULT_ENVI_OPTIONS = (
     "SUFFIX=ADD"
 )
 
-DEFAULT_TILE_SIZE = [128, 128]
-DEFAULT_TIFF_OPTIONS = (
-    "COMPRESS=DEFLATE",
-    "ZLEVEL=4",
-    "TILED=YES",
-    f"BLOCKXSIZE={DEFAULT_TILE_SIZE[1]}",
-    f"BLOCKYSIZE={DEFAULT_TILE_SIZE[0]}",
-)
-DEFAULT_ENVI_OPTIONS = (
-    "INTERLEAVE=BIL",
-    "SUFFIX=ADD"
-)
 
 cdef void write_hdf5_block_3D(object fhandle, float[:, :, ::1] data, bytes datasetName, list block):
 
@@ -119,15 +107,20 @@ cdef class CPhaseLink:
 
     def get_projection(self, slc_stack):
         cdef object ds, gt, projection
-        cdef str inp_file
+        cdef str projection
         cdef tuple geotransform #, extent
         with h5py.File(slc_stack, 'r') as ds:
-            if 'spatial_ref' in ds:
-                geotransform = tuple([int(float(x)) for x in ds['spatial_ref'].attrs['GeoTransform'].split()])
-                projection = CRS.from_wkt(ds['spatial_ref'].attrs['crs_wkt'])
-            else:
-                geotransform = (0, 1, 0, 0, 0, 1)
-                projection = CRS.from_epsg(4326)
+            attrs = dict(ds.attrs)
+            projection = attrs['spatial_ref'][3:-1]
+            geotransform = [attrs['X_FIRST'], attrs['X_STEP'], 0, attrs['Y_FIRST'], 0, attrs['Y_STEP']]
+            geotransform = [float(x) for x in geotransform]
+
+            #if 'spatial_ref' in ds:
+            #    geotransform = tuple([int(float(x)) for x in ds['spatial_ref'].attrs['GeoTransform'].split()])
+            #    projection = CRS.from_wkt(ds['spatial_ref'].attrs['crs_wkt'])
+            #else:
+            #    geotransform = (0, 1, 0, 0, 0, 1)
+            #    projection = CRS.from_epsg(4326)
 
         return projection, geotransform
 
@@ -335,12 +328,12 @@ cdef class CPhaseLink:
         return
 
     def set_projection_gdal1_int(self, cnp.ndarray[int, ndim=2] data, int bands, bytes output, str description,
-                             object projection, tuple geotransform):
+                             str projection, tuple geotransform):
         cdef object driver, dataset, band1, target_crs
         driver = gdal.GetDriverByName('ENVI')
         dataset = driver.Create(output, self.width, self.length, 1, gdal.GDT_Int16, DEFAULT_ENVI_OPTIONS)
         dataset.SetGeoTransform(list(geotransform))
-        dataset.SetProjection(projection.to_wkt()) #target_crs.ExportToWkt())
+        dataset.SetProjection(projection) #.to_wkt()) #target_crs.ExportToWkt())
         band1 = dataset.GetRasterBand(1)
         band1.SetDescription(description)
         gdal_array.BandWriteArray(band1, data, xoff=0, yoff=0)
@@ -353,12 +346,12 @@ cdef class CPhaseLink:
         return
 
     def set_projection_gdal1(self, cnp.ndarray[float, ndim=2] data, int bands, bytes output, str description,
-                             object projection, tuple geotransform):
+                             str projection, tuple geotransform):
         cdef object driver, dataset, band1, target_crs
         driver = gdal.GetDriverByName('ENVI')
         dataset = driver.Create(output, self.width, self.length, 1, gdal.GDT_Float32, DEFAULT_ENVI_OPTIONS)
         dataset.SetGeoTransform(list(geotransform))
-        dataset.SetProjection(projection.to_wkt()) #target_crs.ExportToWkt())
+        dataset.SetProjection(projection) #.to_wkt()) #target_crs.ExportToWkt())
         band1 = dataset.GetRasterBand(1)
         band1.SetDescription(description)
         gdal_array.BandWriteArray(band1, data, xoff=0, yoff=0)
@@ -371,7 +364,7 @@ cdef class CPhaseLink:
         return
 
     def set_projection_gdalm(self, cnp.ndarray[float, ndim=3] data, int bands, bytes output, list description,
-                             object projection, tuple geotransform):
+                             str projection, tuple geotransform):
         cdef int i
         cdef object driver, dataset, band
         driver = gdal.GetDriverByName('ENVI')
@@ -386,7 +379,7 @@ cdef class CPhaseLink:
             del band
 
         dataset.SetGeoTransform(list(geotransform))
-        dataset.SetProjection(projection.to_wkt())
+        dataset.SetProjection(projection) #.to_wkt())
         dataset.FlushCache()
         dataset = None
 
@@ -394,10 +387,11 @@ cdef class CPhaseLink:
 
     def unpatch(self):
         cdef list block
-        cdef object fhandle, psf, projection
+        cdef object fhandle, psf
         cdef int index, box_length, box_width
         cdef cnp.ndarray[int, ndim=1] box
         cdef bytes patch_dir
+        cdef str projection
         cdef float complex[:, :, ::1] rslc_ref, rslc_ref_seq
         cdef cnp.ndarray[float, ndim=3] temp_coh, ps_prod, eig_values = np.zeros((3, self.length, self.width), dtype=np.float32)
         cdef cnp.ndarray[float, ndim=2] amp_disp = np.zeros((self.length, self.width), dtype=np.float32)
@@ -421,6 +415,7 @@ cdef class CPhaseLink:
         projection, geotransform = self.get_projection(self.inps.slc_stack)
 
         with h5py.File(self.RSLCfile.decode('UTF-8'), 'a') as fhandle:
+
 
             for index, box in enumerate(self.box_list):
                 box_width = box[2] - box[0]

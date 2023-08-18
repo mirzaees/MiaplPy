@@ -15,14 +15,15 @@ from datetime import datetime
 import argparse
 import glob
 from pyproj import CRS
-from compass.utils.helpers import bbox_to_utm
+from pyproj.transformer import Transformer
+# from compass.utils.helpers import bbox_to_utm
 
 try:
     from osgeo import gdal
 except ImportError:
     raise ImportError('Can not import gdal [version>=3.0]!')
 
-
+from mintpy.constants import EARTH_RADIUS
 from mintpy.utils import readfile, writefile, ptime, attribute as attr, utils as ut
 from miaplpy.objects import utils as mut
 from miaplpy.objects.slcStack import (slcDatasetNames,
@@ -136,6 +137,24 @@ def run_or_skip(inps, ds_name_dict, out_file):
 
     return flag
 
+def bbox_to_utm(bounds, src_epsg, dst_epsg):
+    t = Transformer.from_crs(src_epsg, dst_epsg, always_xy=True)
+    left, bottom, right, top = bounds
+    bbox = (*t.transform(left, bottom), *t.transform(right, top))  # type: ignore
+    return bbox
+
+def bbox_to_utm(bbox, epsg_dst, epsg_src=4326):
+    """Convert a list of points to a specified UTM coordinate system.
+        If epsg_src is 4326 (lat/lon), assumes points_xy are in degrees.
+    """
+    xmin, ymin, xmax, ymax = bbox
+    t = Transformer.from_crs(epsg_src, epsg_dst, always_xy=True)
+    xs = [xmin, xmax]
+    ys = [ymin, ymax]
+    xt, yt = t.transform(xs, ys)
+    xys = list(zip(xt, yt))
+    return *xys[0], *xys[1]
+
 
 def read_subset_box(template_file, meta):
     """Read subset info from template file
@@ -214,69 +233,105 @@ def read_subset_box(template_file, meta):
 
     return pix_box, meta
 
-def extract_metadata(h5_file):
+
+def extract_metadata(h5_file, template_file):
     """Extract ISCE3 metadata for MiaplPy."""
     meta = {}
 
     with h5py.File(h5_file, 'r') as ds:
+        metadata = ds['metadata']
+        pixel_height = float(ds['data']['y_spacing'][()])
+        pixel_width = float(ds['data']['x_spacing'][()])
+        x_origin = min(ds['data']['x_coordinates'][()])
+        y_origin = max(ds['data']['y_coordinates'][()])
+        xcoord = ds['data']['x_coordinates'][()]
+        ycoord = ds['data']['y_coordinates'][()]
         dsg = ds['data']['projection'].attrs
         meta['spatial_ref'] = dsg['spatial_ref']
-        metadata = ds['metadata']
-        meta['POLARIZATION'] = metadata['processing_information']['input_burst_metadata']['polarization'][()].decode('utf-8')
-        meta['LENGTH'] = ds['data']['x'].shape[0]
-        meta['WIDTH'] = ds['data']['x'].shape[1]
         meta['WAVELENGTH'] = float(metadata['processing_information']['input_burst_metadata']['wavelength'][()])
         meta["ORBIT_DIRECTION"] = metadata['orbit']['orbit_direction'][()].decode('utf-8')
+        meta['POLARIZATION'] = metadata['processing_information']['input_burst_metadata']['polarization'][()].decode('utf-8')
 
-        meta["STARTING_RANGE"] = float(metadata['processing_information']['input_burst_metadata']['starting_range'][()])
-        meta["RANGE_PIXEL_SIZE"] = metadata['processing_information']['input_burst_metadata']['range_pixel_spacing'][()]
-        x_step = float(ds['data']['x_spacing'][()])
-        y_step = float(ds['data']['y_spacing'][()])
-        x_first = float(ds['data']['x_coordinates'][()][0])
-        y_first = float(ds['data']['y_coordinates'][()][-1])
+        meta['STARTING_RANGE'] = float(metadata['processing_information']['input_burst_metadata']['starting_range'][()])
         datestr = metadata['orbit']['reference_epoch'][()].decode("utf-8")
-        utc = datetime.strptime(datestr[0:-3], '%Y-%m-%d %H:%M:%S.%f')
-        meta["CENTER_LINE_UTC"] = utc.hour * 3600.0 + utc.minute * 60.0 + utc.second + utc.microsecond * (1e-6)  # Starting line in fact
-        S = min(ds['data']['y_coordinates'][:])
-        N = max(ds['data']['y_coordinates'][:])
-        E = max(ds['data']['x_coordinates'][:])
-        W = min(ds['data']['x_coordinates'][:])
 
     if meta["ORBIT_DIRECTION"].startswith("D"):
         meta["HEADING"] = -168
     else:
         meta["HEADING"] = -12
+
     meta["ALOOKS"] = 1
     meta["RLOOKS"] = 1
-
-    meta["X_FIRST"] = f'{x_first:.9f}'
-    meta["Y_FIRST"] = f'{y_first:.9f}'
-    meta["X_STEP"] = f'{x_step:.9f}'
-    meta["Y_STEP"] = f'{y_step:.9f}'
-    meta["X_UNIT"] = "m"
-    meta["Y_UNIT"] = "m"
-
-    meta["ANTENNA_SIDE"] = -1
-    meta["PROCESSOR"] = "isce3"
-    meta["PLATFORM"] = "Sen"
-    meta["EARTH_RADIUS"] = 6337286.638938101
+    meta['PLATFORM'] = "Sen"
+    #crs = CRS.from_wkt(meta['spatial_ref'].decode("utf-8"))
+    crs = meta['spatial_ref'].decode("utf-8")
+    utc = datetime.strptime(datestr[0:-3], '%Y-%m-%d %H:%M:%S.%f')
+    meta["CENTER_LINE_UTC"] = utc.hour * 3600.0 + utc.minute * 60.0 + utc.second + utc.microsecond * (
+        1e-6)  # Starting line in fact
+    meta["X_FIRST"] = x_origin - pixel_width // 2
+    meta["Y_FIRST"] = y_origin - pixel_height // 2
+    meta["X_STEP"] = pixel_width
+    meta["Y_STEP"] = pixel_height
+    meta["X_UNIT"] = meta["Y_UNIT"] = "meters"
+    meta["EARTH_RADIUS"] = EARTH_RADIUS
     meta["HEIGHT"] = 693000.0
-    meta['INTERLEAVE'] = 'BSQ'
-    meta['PLATFORM'] = 'sen'
-    meta['FILE_TYPE'] = 'slc'
+    # Range and Azimuth pixel size need revision, values are just to fill in
+    meta["RANGE_PIXEL_SIZE"] = abs(pixel_width)
+    meta["AZIMUTH_PIXEL_SIZE"] = abs(pixel_height)
+    meta["PROCESSOR"] = "isce3"
+    meta["ANTENNA_SIDE"] = -1
 
-    meta["Y_REF1"] = str(S)
-    meta["Y_REF2"] = str(S)
-    meta["Y_REF3"] = str(N)
-    meta["Y_REF4"] = str(N)
-    meta["X_REF1"] = str(W)
-    meta["X_REF2"] = str(E)
-    meta["X_REF3"] = str(W)
-    meta["X_REF4"] = str(E)
+    pix_box, geo_box = mut.read_subset_template2box(template_file)
+
+    # get the common raster bound among input files
+    if geo_box:
+        # assuming bbox is in lat/lon coordinates
+        epsg_src = 4326
+        utm_bbox = bbox_to_utm(geo_box, CRS.from_wkt(crs).to_epsg(), epsg_src)
+    else:
+        utm_bbox = None
+    bounds = get_raster_bounds(xcoord, ycoord, utm_bbox)
+    meta['bbox'] = ",".join([str(b) for b in bounds])
+
+    col1, row1, col2, row2 = get_rows_cols(xcoord, ycoord, bounds)
+    length = row2 - row1
+    width = col2 - col1
+    meta['LENGTH'] = length
+    meta['WIDTH'] = width
 
     return meta
 
+
+def get_rows_cols(xcoord, ycoord, bounds):
+    """Get row and cols of the bounding box to subset"""
+    xindex = np.where(np.logical_and(xcoord >= bounds[0], xcoord <= bounds[2]))[0]
+    yindex = np.where(np.logical_and(ycoord >= bounds[1], ycoord <= bounds[3]))[0]
+    row1, row2 = min(yindex), max(yindex)
+    col1, col2 = min(xindex), max(xindex)
+    return col1, row1, col2, row2
+
+
+def get_raster_bounds(xcoord, ycoord, utm_bbox=None):
+    """Get common bounds among all data"""
+    x_bounds = []
+    y_bounds = []
+
+    west = min(xcoord)
+    east = max(xcoord)
+    north = max(ycoord)
+    south = min(ycoord)
+
+    x_bounds.append([west, east])
+    y_bounds.append([south, north])
+    if not utm_bbox is None:
+        x_bounds.append([utm_bbox[0], utm_bbox[2]])
+        y_bounds.append([utm_bbox[1], utm_bbox[3]])
+
+    bounds = max(x_bounds)[0], max(y_bounds)[0], min(x_bounds)[1], min(y_bounds)[1]
+    return bounds
+
 ####################################################################################
+
 
 def write_geometry(outfile, demFile, incAngleFile, azAngleFile=None, waterMaskFile=None,
                    box=None, xstep=1, ystep=1):
@@ -574,9 +629,7 @@ def load_isce3(iargs=None):
     metaFile = sorted(glob.glob(meta_dir + '/static*_iw*.h5'))[0]
 
     # extract metadata
-    metadata = extract_metadata(metaFile)
-    #inps.template_file = None
-    box, metadata = read_subset_box(inps.template_file[0], metadata)
+    metadata = extract_metadata(metaFile, inps.template_file[0])
    
     # convert all value to string format
     for key, value in metadata.items():
@@ -603,7 +656,6 @@ def load_isce3(iargs=None):
             prepare_stack(inps.slcDir, namePattern,
                           metadata=metadata,
                           update_mode=inps.update_mode)
-
 
     return
 

@@ -13,8 +13,10 @@ import h5py
 from osgeo import gdal, osr
 from os import fspath
 import datetime
-from compass.utils.helpers import bbox_to_utm
+# from compass.utils.helpers import bbox_to_utm
 from pyproj import CRS
+from pyproj.transformer import Transformer
+
 from mintpy.utils import ptime, attribute as attr
 from miaplpy.objects.utils import read_attribute
 import time
@@ -173,6 +175,45 @@ def create_geo_dataset_3d(
     dset.attrs["grid_mapping"] = 'spatial_ref'
     return dset
 
+def get_raster_bounds(xcoord, ycoord, utm_bbox=None):
+    """Get common bounds among all data"""
+    x_bounds = []
+    y_bounds = []
+
+    west = min(xcoord)
+    east = max(xcoord)
+    north = max(ycoord)
+    south = min(ycoord)
+
+    x_bounds.append([west, east])
+    y_bounds.append([south, north])
+    if not utm_bbox is None:
+        x_bounds.append([utm_bbox[0], utm_bbox[2]])
+        y_bounds.append([utm_bbox[1], utm_bbox[3]])
+
+    bounds = max(x_bounds)[0], max(y_bounds)[0], min(x_bounds)[1], min(y_bounds)[1]
+    return bounds
+
+
+def bbox_to_utm_sco(bounds, src_epsg, dst_epsg):
+    t = Transformer.from_crs(src_epsg, dst_epsg, always_xy=True)
+    left, bottom, right, top = bounds
+    bbox = (*t.transform(left, bottom), *t.transform(right, top))  # type: ignore
+    return bbox
+
+
+def bbox_to_utm(bbox, epsg_dst, epsg_src=4326):
+    """Convert a list of points to a specified UTM coordinate system.
+        If epsg_src is 4326 (lat/lon), assumes points_xy are in degrees.
+    """
+    xmin, ymin, xmax, ymax = bbox
+    t = Transformer.from_crs(epsg_src, epsg_dst, always_xy=True)
+    xs = [xmin, xmax]
+    ys = [ymin, ymax]
+    xt, yt = t.transform(xs, ys)
+    xys = list(zip(xt, yt))
+    return *xys[0], *xys[1]
+
 
 class cropSLC:
     def __init__(self, pairs_dict: Optional[List[Path]] = None,
@@ -187,27 +228,41 @@ class cropSLC:
         dsname0 = self.pairsDict[self.dates[0]].datasetDict['slc']
         self.geo_bbox = geo_bbox
         self.bb_utm = None
+        self.rdr_bbox = None
         self.crs, self.geotransform, self.shape = self.get_transform(dsname0)
         self.length, self.width = self.shape
-        self.rdr_bbox = self.get_rdr_bbox()
+
         self.lengthc, self.widthc = self.get_size()
 
     def get_transform(self, src_file):
+        import pdb; pdb.set_trace()
         with h5py.File(src_file, 'r') as ds:
             dsg = ds['data']['projection'].attrs
+            xcoord = ds['data']['x_coordinates'][()]
+            ycoord = ds['data']['y_coordinates'][()]
             shape = (ds['data']['y_coordinates'].shape[0], ds['data']['x_coordinates'].shape[0])
-            crs = CRS.from_wkt(dsg['spatial_ref'].decode("utf-8"))
-            x_first = float(ds['data']['x_coordinates'][()][0])
-            y_first = float(ds['data']['y_coordinates'][()][-1])
+            #crs = CRS.from_wkt(dsg['spatial_ref'].decode("utf-8"))
+            crs = dsg['spatial_ref'].decode("utf-8")
             x_step = float(ds['data']['x_spacing'][()])
             y_step = float(ds['data']['y_spacing'][()])
+            x_first = min(ds['data']['x_coordinates'][()])
+            y_first = max(ds['data']['y_coordinates'][()])
             geotransform = (x_first, x_step, 0, y_first, 0, y_step)
         if self.geo_bbox is None:
-            x_last = float(ds['data']['x_coordinates'][()][-1])
-            y_last = float(ds['data']['y_coordinates'][()][0])
+            x_last = max(ds['data']['x_coordinates'][()])
+            y_last = min(ds['data']['y_coordinates'][()])
             self.bb_utm = (x_first, y_first, x_last, y_last)
         else:
             self.bb_utm = bbox_to_utm(self.geo_bbox, epsg_src=4326, epsg_dst=crs.to_epsg())
+
+        bounds = get_raster_bounds(xcoord, ycoord, self.bb_utm)
+
+        xindex = np.where(np.logical_and(xcoord >= bounds[0], xcoord <= bounds[2]))[0]
+        yindex = np.where(np.logical_and(ycoord >= bounds[1], ycoord <= bounds[3]))[0]
+        row1, row2 = min(yindex), max(yindex)
+        col1, col2 = min(xindex), max(xindex)
+
+        self.rdr_bbox = (col1, row1, col2, row2)
 
         return crs, geotransform, shape
 
@@ -222,7 +277,7 @@ class cropSLC:
                                                         self.bb_utm[3], width, length)
         return crop_transform, crop_extent
 
-    def get_rdr_bbox(self):
+    def obs_get_rdr_bbox(self):
         # calculate the image coordinates
         col1 = int((self.bb_utm[0] - self.geotransform[0]) / self.geotransform[1])
         col2 = int((self.bb_utm[2] - self.geotransform[0]) / self.geotransform[1])
@@ -246,7 +301,7 @@ class cropSLC:
         if row1 < 0:
             row1 = 0
             bb_utm3 = self.geotransform[3]
-            self.bb_utm = (self.bb_utm[0],self.bb_utm[1], self.bb_utm[2], bb_utm3)
+            self.bb_utm = (self.bb_utm[0], self.bb_utm[1], self.bb_utm[2], bb_utm3)
 
         print('crop_geo: ', [col1, row1, col2, row2])
         return col1, row1, col2, row2
@@ -287,8 +342,8 @@ class cropSLC:
         f = h5py.File(self.outputFile, access_mode)
         print('create HDF5 file {} with {} mode'.format(self.outputFile, access_mode))
 
-        create_grid_mapping(group=f, crs=self.crs, gt=list(self.geotransform))
-        create_tyx_dsets(group=f, gt=list(self.geotransform), times=self.dates, shape=(self.lengthc, self.widthc))
+        #create_grid_mapping(group=f, crs=self.crs, gt=list(self.geotransform))
+        #create_tyx_dsets(group=f, gt=list(self.geotransform), times=self.dates, shape=(self.lengthc, self.widthc))
 
         dsShape = (self.numSlc, self.lengthc, self.widthc)
         dsDataType = dataType
@@ -317,6 +372,7 @@ class cropSLC:
             ds.attrs["grid_mapping"] = 'spatial_ref'
 
         prog_bar = ptime.progressBar(maxValue=self.numSlc)
+
         for i in range(self.numSlc):
             box = self.rdr_bbox
             slcObj = self.pairsDict[self.dates[i]]
@@ -338,7 +394,6 @@ class cropSLC:
                                                                           w=maxDigit,
                                                                           t=str(dsDataType),
                                                                           s=dsShape))
-
 
         data = np.array(self.dates, dtype=dsDataType)
         if not dsName in f.keys():
@@ -375,72 +430,3 @@ class cropSLC:
         return self.outputFile
 
 
-
-
-
-
-
-
-
-
-
-
-
-
-'''
-
-#############################
-# Open the geocoded data file
-src_file = rasterio.open('geocoded_data.tif')
-
-# Read the relevant metadata
-srs = src_file.crs.to_string()
-extent = src_file.bounds
-pixel_size = src_file.res[0]
-
-# Define the cropping extent
-crop_extent = (xmin, ymin, xmax, ymax)  # replace with your desired extent
-crop_transform = rasterio.transform.from_bounds(*crop_extent, src_file.transform)
-
-# Read the data within the cropping extent
-window = src_file.window(*crop_extent)
-data = src_file.read(1, window=window)
-
-# Create the HDF5 file
-h5_file = h5py.File('cropped_data.h5', 'w')
-
-# Define the data structure
-dtype = data.dtype
-chunks = (256, 256)  # adjust the chunk size as needed
-shape = data.shape
-
-dataset = h5_file.create_dataset('data', shape, dtype=dtype, chunks=chunks)
-
-# Write the data
-dataset.write_direct(data)
-
-# Write georeference information
-grp = h5_file.create_group("georeference")
-grp.create_dataset("transform", data=crop_transform, dtype=crop_transform.dtype)
-grp.attrs["crs"] = srs
-grp.attrs["extent"] = extent
-grp.attrs["pixel_size"] = pixel_size
-
-h5_file.close()
-##############
-
-
-import netCDF4
-
-# Open the HDF5 NetCDF file
-nc_file = netCDF4.Dataset('geocoded_data.h5', 'r')
-
-# Read the georeference information
-transform = nc_file['georeference/transform'][:]
-srs = nc_file['georeference'].getncattr('crs')
-extent = nc_file['georeference'].getncattr('extent')
-pixel_size = nc_file['georeference'].getncattr('pixel_size')
-
-# Close the HDF5 NetCDF file
-nc_file.close()
-'''

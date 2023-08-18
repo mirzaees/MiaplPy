@@ -150,13 +150,10 @@ def run_inreferogram(inps, ifg_file):
 def write_projection(src_file, dst_file) -> None:
     if src_file.endswith('.h5'):
         with h5py.File(src_file, 'r') as ds:
-            if 'spatial_ref' in ds:
-                geotransform = tuple([int(float(x)) for x in ds['spatial_ref'].attrs['GeoTransform'].split()])
-                projection = CRS.from_wkt(ds['spatial_ref'].attrs['crs_wkt']).to_wkt()
-            else:
-                geotransform = (0, 1, 0, 0, 0, 1)
-                projection = CRS.from_epsg(4326).to_wkt()
-
+            attrs = dict(ds.attrs)
+            projection = attrs['spatial_ref'][3:-1]
+            geotransform = [attrs['X_FIRST'], attrs['X_STEP'], 0, attrs['Y_FIRST'], 0, attrs['Y_STEP']]
+            geotransform = [float(x) for x in geotransform]
             nodata = np.nan
     else:
         ds_src = gdal.Open(src_file, gdal.GA_Update)
@@ -170,6 +167,7 @@ def write_projection(src_file, dst_file) -> None:
     ds_dst.GetRasterBand(1).SetNoDataValue(nodata)
     ds_src = ds_dst = None
     return
+
 
 def run_interferogram_2(inps):
     # sequential = True
@@ -353,7 +351,6 @@ def run_interferogram_old(inps, resampName):
     return length, width
 
 
-
 def runFilter(infile, outfile, filterStrength):
     from mroipac.filter.Filter import Filter
 
@@ -439,6 +436,7 @@ def estCoherence(outfile, corfile):
     filtImage.finalizeImage()
     phsigImage.finalizeImage()
 
+
 def run_interpolation(filtifg, tcoh_file, length, width):
     from scipy.spatial import Delaunay
     from scipy.interpolate import LinearNDInterpolator
@@ -501,6 +499,7 @@ def gaussianHP(D0,imgShape):
         for y in range(rows):
             base[y,x] = 1 - exp(((-distance((y,x),center)**2)/(2*(D0**2))))
     return base
+
 
 if __name__ == '__main__':
     main()

@@ -22,6 +22,7 @@ blockPrint()
 import isce
 import isceobj
 from isceobj.Util.ImageUtil import ImageLib as IML
+import xml.etree.ElementTree as ET
 from contrib.UnwrapComp.unwrapComponents import UnwrapComponents
 from miaplpy.objects.arg_parser import MiaplPyParser
 import numpy as np
@@ -56,7 +57,7 @@ def main(iargs=None):
 
     inps.work_dir = os.path.dirname(inps.input_ifg)
 
-    if not os.path.exists(inps.unwrapped_ifg + '.conncomp.vrt'):
+    if not os.path.exists(inps.work_dir + '/filt_fine.unw.conncomp.vrt'):
        
         unwObj = Snaphu(inps)
         do_tiles, metadata = unwObj.need_to_split_tiles()
@@ -74,14 +75,14 @@ def main(iargs=None):
             runUnwrap(inps.input_ifg, inps.unwrapped_ifg, inps.input_cor, metadata, inps.unwrap_2stage)
 
     if inps.unwrap_2stage:
-        temp_unwrap = os.path.dirname(inps.unwrapped_ifg) + f'/temp_{os.path.basename(inps.unwrapped_ifg)}'
+        temp_unwrap = os.path.dirname(inps.unwrapped_ifg) + '/temp_filt_fine.unw'
         inpFile = temp_unwrap
         ccFile = glob.glob(os.path.dirname(inps.unwrapped_ifg) + '/*conncomp')[0]
         outFile = inps.unwrapped_ifg
         unwrap_2stage(inpFile, ccFile, outFile, unwrapper_2stage_name=None, solver_2stage=None)
 
     if inps.remove_filter_flag and not os.path.exists(inps.unwrapped_ifg + '.old'):
-        input_ifg_nofilter = inps.input_ifg.split('_filt')[0] + '.int'
+        input_ifg_nofilter = os.path.join(os.path.dirname(inps.input_ifg), 'fine.int')
         remove_filter(input_ifg_nofilter, inps.input_ifg, inps.unwrapped_ifg)
 
     print('Time spent: {} m'.format((time.time() - time0)/60))
@@ -92,8 +93,8 @@ def main(iargs=None):
 class Snaphu:
 
     def __init__(self, inps):
-        pair = os.path.basename(inps.unwrapped_ifg).split('.')[0]
-        self.config_file = os.path.dirname(inps.unwrapped_ifg) + f'/unwrap_configs/config_{pair}'
+
+        self.config_file = os.path.join(inps.work_dir, 'config_all')
         LENGTH = inps.ref_length
         WIDTH = inps.ref_width
         self.num_tiles = inps.num_tiles
@@ -101,7 +102,7 @@ class Snaphu:
         self.inp_wrapped = inps.input_ifg
         self.conncomp = inps.unwrapped_ifg + '.conncomp'
         if inps.unwrap_2stage:
-            self.out_unwrapped = os.path.dirname(inps.unwrapped_ifg) + f'/temp_{os.path.basename(inps.unwrapped_ifg)}'
+            self.out_unwrapped = os.path.dirname(inps.unwrapped_ifg) + '/temp_filt_fine.unw'
 
         self.length, self.width = self.get_image_size()
 
@@ -191,8 +192,12 @@ class Snaphu:
         print(error)
         if 'ERROR' in error.decode('UTF-8') or 'Error' in error.decode('UTF-8'): # or len(error.decode('UTF-8'))>0:
             raise RuntimeError(error)
+
+
         
         if os.path.exists(self.out_unwrapped):
+            #write_xml(self.out_unwrapped, self.length, self.width)
+            #write_vrt(self.out_unwrapped, self.length, self.width)
 
             IML.renderISCEXML(self.out_unwrapped, bands=2, nyy=self.length, nxx=self.width,
                               datatype='float32', scheme='BIL')
@@ -219,6 +224,9 @@ class Snaphu:
            raise RuntimeError(error)  
         
         if os.path.exists(self.out_unwrapped):
+
+            #write_xml(self.out_unwrapped, self.length, self.width)
+            #write_vrt(self.out_unwrapped, self.length, self.width)
   
             IML.renderISCEXML(self.out_unwrapped, bands=2, nyy=self.length, nxx=self.width,
                               datatype='float32', scheme='BIL')
@@ -239,7 +247,7 @@ def runUnwrap(infile, outfile, corfile, config, unwrap_2stage=False):
     wrapName = infile
     unwrapName = outfile
     if unwrap_2stage:
-        unwrapName = os.path.dirname(outfile) + f'/temp_{os.path.basename(outfile)}'
+        unwrapName = os.path.dirname(outfile) + '/temp_filt_fine.unw'
 
     img = isceobj.createImage()
     img.load(infile + '.xml')
@@ -390,7 +398,7 @@ def remove_filter(intfile, filtfile, unwfile):
     ifgphas = np.angle(ds_ifg.GetRasterBand(1).ReadAsArray())
     del ds_ifg
 
-    oldunwf = os.path.dirname(unwfile) + '/old_' + os.path.basename(unwfile)
+    oldunwf = unwfile.split('filt_fine.unw')[0] + 'old_filt_fine.unw'
     unwImage_o = isceobj.Image.createUnwImage()
     unwImage_o.setFilename(oldunwf)
     unwImage_o.setAccessMode('write')
@@ -432,6 +440,110 @@ def remove_filter(intfile, filtfile, unwfile):
     unwImage.finalizeImage()
 
     return
+
+def write_vrt(file, length, width):
+    vrt_content = """<VRTDataset rasterXSize="{width}" rasterYSize="{length}">
+    <VRTRasterBand dataType="Float32" band="1" subClass="VRTRawRasterBand">
+        <SourceFilename relativeToVRT="1">{ifg_file}</SourceFilename>
+        <ByteOrder>LSB</ByteOrder>
+        <ImageOffset>0</ImageOffset>
+        <PixelOffset>4</PixelOffset>
+        <LineOffset>{line_offset}</LineOffset>
+    </VRTRasterBand>
+    <VRTRasterBand dataType="Float32" band="2" subClass="VRTRawRasterBand">
+        <SourceFilename relativeToVRT="1">{ifg_file}</SourceFilename>
+        <ByteOrder>LSB</ByteOrder>
+        <ImageOffset>{im_offset}</ImageOffset>
+        <PixelOffset>4</PixelOffset>
+        <LineOffset>{line_offset}</LineOffset>
+    </VRTRasterBand>
+</VRTDataset>""".format(width=width, length=length,
+                        ifg_file=file, line_offset=width*8, im_offset=width*4)
+
+    out_vrt = file + '.vrt'
+    with open(out_vrt, "w") as vrt_file:
+        vrt_file.write(vrt_content)
+    return
+
+
+def write_xml(file, length, width):
+
+    # Create the root element
+    root = ET.Element('imageFile')
+
+    # Create property elements
+    properties = [
+        {'name': 'MiaplPy', 'value': 'Updates for August 2023.'},
+        {'name': 'access_mode', 'value': 'read', 'doc': 'Image access mode.'},
+        {'name': 'byte_order', 'value': 'l', 'doc': 'Endianness of the image.'},
+        {'name': 'data_type', 'value': 'FLOAT', 'doc': 'Image data type.'},
+        {'name': 'extra_file_name', 'value': file + '.vrt', 'doc': 'For example name of vrt metadata.'},
+        {'name': 'family', 'value': 'image', 'doc': 'Instance family name'},
+        {'name': 'file_name', 'value': file, 'doc': 'Name of the image file.'},
+        {'name': 'length', 'value': length, 'doc': 'Image length'},
+        {'name': 'name', 'value': 'image_name', 'doc': 'Instance length'},
+        {'name': 'number_bands', 'value': 2, 'doc': 'Number of image bands.'},
+        {'name': 'scheme', 'value': 'BIL', 'doc': 'Interleaving scheme of the image.'},
+        {'name': 'width', 'value': width, 'doc': 'Image width.'},
+        {'name': 'xmax', 'value': width, 'doc': 'Maximum range value'},
+        {'name': 'xmin', 'value': 0, 'doc': 'Minimum range value'},
+    ]
+
+    for prop in properties:
+        property_elem = ET.SubElement(root, 'property', name=prop['name'])
+        value_elem = ET.SubElement(property_elem, 'value')
+        value_elem.text = prop['value']
+        if 'doc' in prop:
+            doc_elem = ET.SubElement(property_elem, 'doc')
+            doc_elem.text = prop['doc']
+
+    # Create component elements
+    components = [
+        {
+            'name': 'coordinate1',
+            'doc': 'First coordinate of a 2D image (width).',
+            'properties': [
+                {'name': 'delta', 'value': '1', 'doc': 'Coordinate quantization.'},
+                {'name': 'endingvalue', 'value': str(width), 'doc': 'Ending value of the coordinate.'},
+                {'name': 'family', 'value': 'imagecoordinate', 'doc': 'Instance family name'},
+                {'name': 'name', 'value': 'imagecoordinate_name', 'doc': 'Instance name'},
+                {'name': 'size', 'value': str(width), 'doc': 'Coordinate size.'},
+                {'name': 'startingvalue', 'value': '0', 'doc': 'Starting value of the coordinate.'}
+            ]
+        },
+        {
+            'name': 'coordinate2',
+            'doc': 'Second coordinate of a 2D image (length).',
+            'properties': [
+                {'name': 'delta', 'value': '1', 'doc': 'Coordinate quantization.'},
+                {'name': 'endingvalue', 'value': str(length), 'doc': 'Ending value of the coordinate.'},
+                {'name': 'family', 'value': 'imagecoordinate', 'doc': 'Instance family name'},
+                {'name': 'name', 'value': 'imagecoordinate_name', 'doc': 'Instance name'},
+                {'name': 'size', 'value': str(length), 'doc': 'Coordinate size.'},
+                {'name': 'startingvalue', 'value': '0', 'doc': 'Starting value of the coordinate.'}
+            ]
+        },
+    ]
+
+    for comp in components:
+        component_elem = ET.SubElement(root, 'component', name=comp['name'])
+        doc_elem = ET.SubElement(component_elem, 'doc')
+        doc_elem.text = comp['doc']
+
+        for prop in comp['properties']:
+            property_elem = ET.SubElement(component_elem, 'property', name=prop['name'])
+            value_elem = ET.SubElement(property_elem, 'value')
+            value_elem.text = prop['value']
+            doc_elem = ET.SubElement(property_elem, 'doc')
+            doc_elem.text = prop['doc']
+
+    # ... (other property elements)
+
+    # Create an ElementTree object and pretty-print the XML
+    tree = ET.ElementTree(root)
+    tree.write(file + '.xml', encoding='utf-8', xml_declaration=True)
+
+    print("XML created and saved as 'output.xml'")
 
 
 if __name__ == '__main__':

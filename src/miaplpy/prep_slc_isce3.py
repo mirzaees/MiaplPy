@@ -137,11 +137,12 @@ def run_or_skip(inps, ds_name_dict, out_file):
 
     return flag
 
-def bbox_to_utm(bounds, src_epsg, dst_epsg):
-    t = Transformer.from_crs(src_epsg, dst_epsg, always_xy=True)
-    left, bottom, right, top = bounds
-    bbox = (*t.transform(left, bottom), *t.transform(right, top))  # type: ignore
-    return bbox
+
+#def bbox_to_utm(bounds, src_epsg, dst_epsg):
+#    t = Transformer.from_crs(src_epsg, dst_epsg, always_xy=True)
+#    left, bottom, right, top = bounds
+#    bbox = (*t.transform(left, bottom), *t.transform(right, top))  # type: ignore
+#    return bbox
 
 def bbox_to_utm(bbox, epsg_dst, epsg_src=4326):
     """Convert a list of points to a specified UTM coordinate system.
@@ -168,7 +169,7 @@ def read_subset_box(template_file, meta):
     if template_file and os.path.isfile(template_file):
         # read subset info from template file
         pix_box, geo_box = mut.read_subset_template2box(template_file)
-        crs = CRS.from_wkt(meta['spatial_ref'].decode("utf-8"))
+        crs = CRS.from_wkt(meta['spatial_ref'])
         x_origin = float(meta["X_FIRST"])
         y_origin = float(meta["Y_FIRST"])
         pixel_width = float(meta["X_STEP"])
@@ -234,6 +235,29 @@ def read_subset_box(template_file, meta):
     return pix_box, meta
 
 
+def get_utm_zone(wkt):
+    # Open the GeoTIFF file
+    # ds = gdal.Open(geotiff_path)
+    # if not ds:
+    #     print("Error: Couldn't open the file")
+    #     return None
+
+    # Get the projection reference
+    # wkt = ds.GetProjectionRef()
+
+    # Convert the WKT string to an OSR SpatialReference object
+    sr = osr.SpatialReference()
+    sr.ImportFromWkt(wkt)
+
+    # Check if the spatial reference is UTM
+    if sr.IsProjected() and "UTM" in sr.GetAttrValue("PROJCS"):
+        # zone_number = sr.GetUTMZone()
+        zone_number = sr.GetAttrValue("PROJCS")[-3::]
+        return zone_number
+    else:
+        print("The provided GeoTIFF is not in a UTM projection.")
+        return None
+
 def extract_metadata(h5_file, template_file):
     """Extract ISCE3 metadata for MiaplPy."""
     meta = {}
@@ -247,7 +271,7 @@ def extract_metadata(h5_file, template_file):
         xcoord = ds['data']['x_coordinates'][()]
         ycoord = ds['data']['y_coordinates'][()]
         dsg = ds['data']['projection'].attrs
-        meta['spatial_ref'] = dsg['spatial_ref']
+        meta['spatial_ref'] = dsg['spatial_ref'].decode('utf-8')
         meta['WAVELENGTH'] = float(metadata['processing_information']['input_burst_metadata']['wavelength'][()])
         meta["ORBIT_DIRECTION"] = metadata['orbit']['orbit_direction'][()].decode('utf-8')
         meta['POLARIZATION'] = metadata['processing_information']['input_burst_metadata']['polarization'][()].decode('utf-8')
@@ -264,7 +288,7 @@ def extract_metadata(h5_file, template_file):
     meta["RLOOKS"] = 1
     meta['PLATFORM'] = "Sen"
     #crs = CRS.from_wkt(meta['spatial_ref'].decode("utf-8"))
-    crs = meta['spatial_ref'].decode("utf-8")
+    crs = meta['spatial_ref'] #.decode("utf-8")
     utc = datetime.strptime(datestr[0:-3], '%Y-%m-%d %H:%M:%S.%f')
     meta["CENTER_LINE_UTC"] = utc.hour * 3600.0 + utc.minute * 60.0 + utc.second + utc.microsecond * (
         1e-6)  # Starting line in fact
@@ -282,7 +306,6 @@ def extract_metadata(h5_file, template_file):
     meta["ANTENNA_SIDE"] = -1
 
     pix_box, geo_box = mut.read_subset_template2box(template_file)
-
     # get the common raster bound among input files
     if geo_box:
         # assuming bbox is in lat/lon coordinates
@@ -299,8 +322,26 @@ def extract_metadata(h5_file, template_file):
     meta['LENGTH'] = length
     meta['WIDTH'] = width
 
+    meta['STARTING_RANGE'] += col1 * abs(pixel_width)
+
     return meta
 
+def update_meta(ref_file, meta):
+    ds = gdal.Open(ref_file, gdal.GA_ReadOnly)
+
+    meta['LENGTH'] = ds.RasterYSize
+    meta['WIDTH'] = ds.RasterXSize
+    geotransform = ds.GetGeoTransform()
+    pixel_width = geotransform[1]
+    pixel_height = geotransform[5]
+    meta["X_FIRST"] = geotransform[0] - pixel_width // 2
+    meta["Y_FIRST"] = geotransform[3] - pixel_height // 2
+    meta["X_STEP"] = pixel_width
+    meta["Y_STEP"] = pixel_height
+    meta["RANGE_PIXEL_SIZE"] = abs(pixel_width)
+    meta["AZIMUTH_PIXEL_SIZE"] = abs(pixel_height)
+
+    return
 
 def get_rows_cols(xcoord, ycoord, bounds):
     """Get row and cols of the bounding box to subset"""
@@ -626,7 +667,7 @@ def load_isce3(iargs=None):
     print(f'update mode: {inps.update_mode}')
 
     meta_dir = inps.geometryDir
-    metaFile = sorted(glob.glob(meta_dir + '/static*_iw*.h5'))[0]
+    metaFile = sorted(glob.glob(meta_dir + '/*/static*_iw*.h5'))[0]
 
     # extract metadata
     metadata = extract_metadata(metaFile, inps.template_file[0])

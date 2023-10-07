@@ -14,15 +14,17 @@ import numpy as np
 from osgeo import gdal
 import shutil
 from mintpy.utils import writefile, readfile, utils as ut
+from pyproj import CRS
+from mintpy.constants import EARTH_RADIUS
 
 EXAMPLE = """example:
-  stitch_bursts.py -i ./miaplpy*/inverted/interferograms_single_reference -g ./gslcs/t*/20170101  -o ./stitched_miaplpy
+  stitch_bursts.py -i ./miaplpy*/inverted/interferograms_single_reference -g ./gslcs/t*/20170101/static*.h5  -o ./stitched_miaplpy
   """
 
 DEFAULT_ENVI_OPTIONS = (
-        "INTERLEAVE=BIL",
-        "SUFFIX=ADD"
-    )
+    "INTERLEAVE=BIL",
+    "SUFFIX=ADD"
+)
 
 unwrap_options = {'two-stage': True,
                   'removeFilter': True,
@@ -30,6 +32,9 @@ unwrap_options = {'two-stage': True,
                   'initMethod': 'MCF',
                   'tileNumPixels': 10000000,
                   }
+
+GEODATASETS = ['layover_shadow_mask', 'local_incidence_angle', 'los_east', 'los_north', 'x', 'y', 'z']
+
 
 def create_parser():
     """Command line parser."""
@@ -50,12 +55,12 @@ def create_parser():
                         help=' Output directory for stitched files e.g.: ./stitched_miaplpy')
     parser.add_argument('-b', '--bbox', dest='bbox', nargs=4, type=float, default=None,
                         help=("Bounding box of area of interest in decimal degrees longitude/latitude: \n"
-                            "  (e.g. --bbox -106.1 30.1 -103.1 33.1 ). \n"))
+                              "  (e.g. --bbox -106.1 30.1 -103.1 33.1 ). \n"))
 
     return parser
 
 
-def cmd_line_parse(iargs = None):
+def cmd_line_parse(iargs=None):
     parser = create_parser()
     inps = parser.parse_args(args=iargs)
     inps.output_dir = os.path.abspath(inps.output_dir)
@@ -71,27 +76,44 @@ def stitch_bursts(iargs=None):
 
     out_ifg_dir = os.path.join(inps.output_dir, 'interferograms')
     out_geometry_dir = os.path.join(inps.output_dir, 'geometry')
+    corr_dir = os.path.join(inps.output_dir, 'correlations')
+
     os.makedirs(out_ifg_dir, exist_ok=True)
     os.makedirs(out_geometry_dir, exist_ok=True)
+    os.makedirs(corr_dir, exist_ok=True)
 
     ifg_list = glob.glob(os.path.abspath(inps.ifg_dir))
     ifg_dict = {}
     cor_dict = {}
     for i, item in enumerate(ifg_list):
-        ifg_dict[f'i{i}'] = sorted(glob.glob(item + '/*.int'))
-        cor_dict[f'i{i}'] = sorted(glob.glob(item + '/*.cor'))
+        ifg_dict[f'i{i}'] = sorted(glob.glob(item + '/*.int.tif'))
+        cor_dict[f'i{i}'] = sorted(glob.glob(item + '/*.cor.tif'))
 
     date_lists = [os.path.basename(x).split('.')[0] for x in ifg_dict['i0']]
     grouped_ifgs = {date: [] for date in date_lists}
     grouped_cors = {date: [] for date in date_lists}
     for i, date in enumerate(date_lists):
-        for key in ifg_dict:
+        for key in ifg_dict.keys():
             if date in ifg_dict[key][i]:
                 grouped_ifgs[date].append(ifg_dict[key][i])
                 grouped_cors[date].append(cor_dict[key][i])
 
     for dates, cur_images in grouped_ifgs.items():
-        outfile = out_ifg_dir + f"/{dates}.int"
+        outfile = out_ifg_dir + f"/{dates}.tif"
+        if not os.path.exists(outfile):
+            stitching.merge_images(
+                cur_images,
+                outfile=outfile,
+                driver="ENVI",
+                out_bounds=inps.bbox,
+                out_bounds_epsg=4326,
+                target_aligned_pixels=True,
+                overwrite=True,
+                strides={"x": 6, "y": 3}
+            )
+
+    for dates, cur_images in grouped_cors.items():
+        outfile = corr_dir + f"/{dates}.tif"
         if not os.path.exists(outfile):
             stitching.merge_images(
                 cur_images,
@@ -107,13 +129,14 @@ def stitch_bursts(iargs=None):
     geom_files = glob.glob(os.path.abspath(inps.geometry_dir))
     box_size = 3000
     with h5py.File(geom_files[0], 'r') as ds:
-        keys = [key for key in ds.keys()]
-
+        keys = [key for key in ds['data'].keys() if key in GEODATASETS]
     for file in geom_files:
         geotransform, projection, nodata = get_projection(file)
         with h5py.File(file, 'r') as ds:
+            local_inc_ang = ds['data']['local_incidence_angle'][()]
+            # mask = np.isnan(local_inc_ang)
             for key in keys:
-                length, width = ds[key].shape
+                length, width = ds['data'][key].shape
                 out_file = os.path.dirname(file) + f"/{key}.geo"
                 if not os.path.exists(out_file):
                     dtype = gdal.GDT_Float32
@@ -122,7 +145,7 @@ def stitch_bursts(iargs=None):
                     band = out_raster.GetRasterBand(1)
                     for i in range(0, length, box_size):
                         for j in range(0, width, box_size):
-                            data = ds[key][i:i + box_size, j:j + box_size]
+                            data = ds['data'][key][i:i + box_size, j:j + box_size].astype(float)
                             band.WriteArray(data, j, i)
                     band.SetNoDataValue(np.nan)
                     out_raster.FlushCache()
@@ -148,8 +171,8 @@ def stitch_bursts(iargs=None):
                 strides={"x": 6, "y": 3}
             )
 
-    tcoh_file = [x + '/tempCoh_average' for x in glob.glob(os.path.dirname(os.path.abspath(inps.ifg_dir)))]
-    outfile = inps.output_dir + "/tempCoh_average"
+    tcoh_file = [x + '/tempCoh_average.tif' for x in glob.glob(os.path.dirname(os.path.abspath(inps.ifg_dir)))]
+    outfile = inps.output_dir + "/geometry/tempCoh_average.tif"
     if not os.path.exists(outfile):
         stitching.merge_images(
             tcoh_file,
@@ -162,6 +185,30 @@ def stitch_bursts(iargs=None):
             strides={"x": 6, "y": 3}
         )
 
+    matching_file = out_ifg_dir + f"/{date_lists[0]}.tif"
+
+    inpfile = inps.output_dir + f"/geometry/tempCoh_average.tif"
+    outfile = inps.output_dir + f"/geometry/tempCoh_average_rsm.tif"
+    print(f"Creating {outfile}")
+
+    stitching.warp_to_match(
+        input_file=inpfile,
+        match_file=matching_file,
+        output_file=outfile,
+        resample_alg="cubic",
+    )
+    for key in keys:
+        inpfile = inps.output_dir + f"/geometry/{key}.geo"
+        outfile = inps.output_dir + f"/geometry/{key}_rsm.tif"
+        print(f"Creating {outfile}")
+
+        stitching.warp_to_match(
+            input_file=inpfile,
+            match_file=matching_file,
+            output_file=outfile,
+            resample_alg="cubic",
+        )
+
     run_unwrap(inps.output_dir, out_ifg_dir, geom_files[0])
 
     return
@@ -169,19 +216,29 @@ def stitch_bursts(iargs=None):
 
 def get_projection(file):
     with h5py.File(file, 'r') as ds:
-        attrs = dict(ds.attrs)
-        projection = attrs['spatial_ref'][3:-1]
-        geotransform = [attrs['X_FIRST'], attrs['X_STEP'], 0, attrs['Y_FIRST'], 0, attrs['Y_STEP']]
-        geotransform = [float(x) for x in geotransform]
+        dsg = ds['data']['projection'].attrs
+        # xcoord = ds['data']['x_coordinates'][()]
+        # ycoord = ds['data']['y_coordinates'][()]
+        x_step = float(ds['data']['x_spacing'][()])
+        y_step = float(ds['data']['y_spacing'][()])
+        x_first = min(ds['data']['x_coordinates'][()])
+        y_first = max(ds['data']['y_coordinates'][()])
+        geotransform = (x_first, x_step, 0, y_first, 0, y_step)
+        projection = CRS.from_wkt(dsg['spatial_ref'].decode('utf-8'))
         nodata = np.nan
+
     return geotransform, projection, nodata
 
 
 def write_projection(geotransform, projection, nodata, dst_file) -> None:
+    # if "layover_shadow_mask" in dst_file:
+    #    nnodata = 0
+    # else:
+    #    nnodata = np.nan
 
     ds_dst = gdal.Open(dst_file, gdal.GA_Update)
     ds_dst.SetGeoTransform(geotransform)
-    ds_dst.SetProjection(projection)
+    ds_dst.SetProjection(projection.to_wkt())
     ds_dst.GetRasterBand(1).SetNoDataValue(nodata)
     ds_src = ds_dst = None
     return
@@ -190,7 +247,7 @@ def write_projection(geotransform, projection, nodata, dst_file) -> None:
 def run_unwrap(out_dir, ifg_dir, reference_file, write_job=False, job_obj=None):
     """ Unwraps interferograms
     """
-    ifg_list = glob.glob(ifg_dir + '/*.int')
+    ifg_list = glob.glob(ifg_dir + '/*.tif')
     ifg_list = [os.path.abspath(x) for x in ifg_list]
     ds = gdal.Open(ifg_list[0], gdal.GA_ReadOnly)
     width = ds.RasterXSize
@@ -198,10 +255,10 @@ def run_unwrap(out_dir, ifg_dir, reference_file, write_job=False, job_obj=None):
     num_pixels = length * width
 
     with h5py.File(reference_file, 'r') as rf:
-        attrs = rf.attrs
-        wavelength = attrs['WAVELENGTH']
-        earth_radius = attrs['EARTH_RADIUS']
-        height = attrs['HEIGHT']
+        attrs = rf['metadata']
+        wavelength = float(attrs['processing_information']['input_burst_metadata']['wavelength'][()])
+        earth_radius = EARTH_RADIUS
+        height = 693000.0
 
     run_file_unwrap = os.path.join(out_dir, 'run_unwrap')
     print('Generate {}'.format(run_file_unwrap))
@@ -219,20 +276,20 @@ def run_unwrap(out_dir, ifg_dir, reference_file, write_job=False, job_obj=None):
     config_dir = os.path.join(out_unwrap_dir, 'unwrap_configs')
     os.makedirs(config_dir, exist_ok=True)
 
-    corr_file = os.path.join(out_dir, 'tempCoh_average')
+    corr_file = os.path.join(out_dir, 'geometry/tempCoh_average_rsm.tif')
 
     for inp_ifg in ifg_list:
         unw_file = os.path.basename(inp_ifg).split('.int')[0] + '.unw'
         out_ifg = os.path.abspath(os.path.join(out_unwrap_dir, unw_file))
 
-        scp_args = '--ifg {a1} --coherence {a2} --unwrapped_ifg {a3} '\
+        scp_args = '--ifg {a1} --coherence {a2} --unwrapped_ifg {a3} ' \
                    '--max_discontinuity {a4} --init_method {a5} --length {a6} ' \
                    '--width {a7} --height {a8} --num_tiles {a9} --earth_radius {a10} ' \
                    ' --wavelength {a11} --tmp'.format(a1=inp_ifg, a2=corr_file, a3=out_ifg,
-                                                a4=unwrap_options['maxDiscontinuity'],
-                                                a5=unwrap_options['initMethod'],
-                                                a6=length, a7=width, a8=height, a9=ntiles,
-                                                a10=earth_radius, a11=wavelength)
+                                                      a4=unwrap_options['maxDiscontinuity'],
+                                                      a5=unwrap_options['initMethod'],
+                                                      a6=length, a7=width, a8=height, a9=ntiles,
+                                                      a10=earth_radius, a11=wavelength)
 
         if unwrap_options['two-stage'] == 'yes':
             scp_args += ' --two-stage'
@@ -261,6 +318,7 @@ def run_unwrap(out_dir, ifg_dir, reference_file, write_job=False, job_obj=None):
         job_obj.write_batch_jobs(batch_file=run_file_unwrap, num_cores_per_task=ntiles)
 
     return
+
 
 #########################################################################
 

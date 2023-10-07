@@ -566,7 +566,7 @@ class miaplpyTimeSeriesAnalysis(TimeSeriesAnalysis):
         num_lin = 0
 
         #corr_file = os.path.join(self.workDir, 'inverted/tempCoh_{}'.format(self.template['miaplpy.timeseries.tempCohType']))
-        corr_file = os.path.join(self.workDir, 'inverted/tempCoh_average')
+        corr_file = os.path.join(self.workDir, 'inverted/tempCoh_average.tif')
         unwrap_mask = os.path.join(self.workDir, 'inverted/mask_unwrap')
         #unwrap_mask = os.path.abspath(self.template['miaplpy.unwrap.mask'])
 
@@ -577,7 +577,7 @@ class miaplpyTimeSeriesAnalysis(TimeSeriesAnalysis):
 
         for pair in self.pairs:
             out_ifg = os.path.join(out_dir, pair[0] + '_' + pair[1] + '.unw')
-            inp_ifg = os.path.join(self.ifgram_dir, pair[0] + '_' + pair[1] + '_filt.int')
+            inp_ifg = os.path.join(self.ifgram_dir, pair[0] + '_' + pair[1] + '.int.tif')
 
             scp_args = '--ifg {a1} --coherence {a2} --unwrapped_ifg {a3} '\
                        '--max_discontinuity {a4} --init_method {a5} --length {a6} ' \

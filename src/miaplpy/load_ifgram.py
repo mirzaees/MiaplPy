@@ -18,7 +18,7 @@ from miaplpy.defaults import auto_path
 from mintpy import load_data as mld
 from mintpy.utils import readfile, ptime, utils as ut
 from miaplpy.objects.utils import check_template_auto_value, read_subset_template2box
-
+from mintpy.objects import sensor
 
 #################################################################
 datasetName2templateKey = {'unwrapPhase'     : 'miaplpy.load.unwFile',
@@ -294,6 +294,8 @@ def prep_isce3(meta_file, obs_dir, obs_file, slc_files):
 
 def prepare_metadata(inpsDict):
     processor = inpsDict['processor']
+    if 'isce' in processor:
+        processor = 'isce'
     script_name = importlib.import_module('mintpy.cli.prep_{}'.format(processor))
 
     print('-'*50)

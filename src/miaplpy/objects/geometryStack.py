@@ -31,8 +31,8 @@ CPX_ZERO = np.complex64(0.0)
 dataType = np.float32
 
 dsdict_isce3 = {'height':'z', 'xCoord':'x', 'yCoord':'y',
-          'incidenceAngle':'incidence_angle',
-          'azimuthAngle':'heading_angle', 'shadowMask':'layover_shadow_mask'}
+          'incidenceAngle':'local_incidence_angle',
+          'azimuthAngle':'los_east', 'shadowMask':'layover_shadow_mask'}
 
 
 class geometryDict(GDict):
@@ -68,7 +68,12 @@ class geometryDict(GDict):
             metadata['FILE_TYPE'] = 'geometry'
             with h5py.File(self.file, 'r') as gds:
                 gds_meta = gds['data']
-                data = gds_meta[dsdict_isce3[family]][box[1]:box[3], box[0]:box[2]]
+                if family == 'azimuthAngle':
+                    los_east = gds_meta['los_east'][box[1]:box[3], box[0]:box[2]]
+                    los_north = gds_meta['los_north'][box[1]:box[3], box[0]:box[2]]
+                    data = np.arctan2(los_north, los_east)
+                else:
+                    data = gds_meta[dsdict_isce3[family]][box[1]:box[3], box[0]:box[2]]
 
         else:
             self.file = self.datasetDict[family].split('.xml')[0]

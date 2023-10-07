@@ -580,10 +580,10 @@ class slcDict:
                 interleave = atr['INTERLEAVE'].upper()
             else:
                 interleave = 'BIL'
-            data = readfile.read_binary(fname, shape, box=box, data_type='complex64', byte_order='l',
-                    num_band=1, interleave=interleave, band=1, cpx_band='cpx',
-                    xstep=1, ystep=1)
-            # data, metadata = read_binary_file(fname, datasetName=datasetName, box=box)
+            #data = readfile.read_binary(fname, shape, box=box, data_type='complex64', byte_order='l',
+            #        num_band=1, interleave=interleave, band=1, cpx_band='cpx',
+            #        xstep=1, ystep=1)
+            data, metadata = read_binary_file(fname, datasetName=datasetName, box=box)
             # metadata = read_binary_file(fname, datasetName=datasetName, attributes_only=True)
             #return fname, metadata
             return data, atr

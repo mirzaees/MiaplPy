@@ -129,8 +129,6 @@ cdef inline float complex[:,::1] conjmat2(float complex[:,::1] x):
 
 
 cdef inline float complex[:,::1] multiply_elementwise_dc(float[:, :] x, float complex[:, ::1] y):
-    #assert x.shape[0] == y.shape[0]
-    #assert x.shape[1] == y.shape[1]
     cdef cnp.intp_t i, t
     cdef float complex[:, ::1] out = np.zeros((y.shape[0], y.shape[1]), dtype=np.complex64)
     for i in range(x.shape[0]):
@@ -141,7 +139,6 @@ cdef inline float complex[:,::1] multiply_elementwise_dc(float[:, :] x, float co
 
 
 cdef inline float complex multiplymat11(float complex[::1] x, float complex[::1] y):
-    #assert x.shape[0] == y.shape[0]
     cdef float complex out = 0
     cdef cnp.intp_t i
     for i in range(x.shape[0]):
@@ -150,7 +147,6 @@ cdef inline float complex multiplymat11(float complex[::1] x, float complex[::1]
 
 
 cdef inline float complex[:,::1] multiplymat22(float complex[:, :] x, float complex[:, ::1] y):
-    #assert x.shape[1] == y.shape[0]
     cdef cnp.intp_t s1 = x.shape[0]
     cdef cnp.intp_t s2 = y.shape[1]
     cdef float complex[:,::1] out = np.zeros((s1,s2), dtype=np.complex64)
@@ -165,7 +161,6 @@ cdef inline float complex[:,::1] multiplymat22(float complex[:, :] x, float comp
 
 
 cdef inline float complex[::1] multiplymat12(float complex[::1] x, float complex[:, ::1] y):
-    #assert x.shape[0] == y.shape[0]
     cdef cnp.intp_t s1 = x.shape[0]
     cdef cnp.intp_t s2 = y.shape[1]
     cdef float complex[::1] out = np.zeros(s2, dtype=np.complex64)
@@ -194,16 +189,13 @@ cdef inline float complex[::1] EVD_phase_estimation_cy(float complex[:, ::1] coh
     """ Estimates the phase values based on eigen value decomosition """
     cdef float[::1] eigen_value
     cdef float complex[:, :] eigen_vector
-    #cdef float complex x0
     cdef cnp.intp_t i, n = coh.shape[0]
     cdef float complex[::1] vec = np.zeros(n, dtype=np.complex64)
 
     eigen_value, eigen_vector = lap.cheevd(coh)[0:2]
 
-    #x0 = cexpf(1j * cargf_r(eigen_vector[0, n-1]))
-
     for i in range(n):
-        vec[i] = eigen_vector[i, n-1]  #* conjf(x0)
+        vec[i] = eigen_vector[i, n-1]
 
     return vec
 
@@ -217,16 +209,15 @@ cdef inline float complex[::1] EMI_phase_estimation_cy(float complex[:, ::1] coh
     cdef float[::1] eigen_value
     cdef float complex[:, :] eigen_vector
     cdef float complex[::1] vec = np.zeros(n, dtype=np.complex64)
-    #cdef float complex x0
+
 
     invabscoh = inverse_float_matrix(abscoh)
     M = multiply_elementwise_dc(invabscoh, coh)
     eigen_value, eigen_vector = lap.cheevd(M)[0:2]
 
-    #x0 = cexpf(1j * cargf_r(eigen_vector[0, 0]))
 
     for i in range(n):
-            vec[i] = eigen_vector[i, 0] #* conjf(x0)
+            vec[i] = eigen_vector[i, 0]
     return vec
 
 
@@ -253,9 +244,6 @@ cdef inline float[::1] optimize_lbfgs(double[::1] x0, float complex[:, ::1] inve
     cdef cnp.intp_t i
 
     res = minimize(optphase_cy, x0, args=inverse_gam, method='L-BFGS-B', options={'gtol': 1e-6, 'disp': False}).x
-
-    #for i in range(x0.shape[0]):
-    #    out[i] = res[i] - res[0]
 
     return out
 
@@ -715,7 +703,7 @@ cdef inline tuple real_time_phase_linking_iterate(float complex[:,::1] full_stac
 
     cdef float complex value0 = 1+0j
     cdef float complex [:, ::1] old_images, compressed, new_image, compressed_arch, archive_stack
-    cdef float complex [::1] vec_refined, ph_new, ph_tmp, ph_tmp1, vec_refined1
+    cdef float complex [::1] vec_refined, ph_new, ph_tmp
     cdef int num_samples = full_stack_complex_samples.shape[1]
     cdef int max_coh_index, max_coh_index_first, t, i, n_ph, num_oldim, num_img = full_stack_complex_samples.shape[0]
     cdef int num_archived_stacks, num_new_images, first_new_image, first_old_image, last_old_image, num_old_images
@@ -743,7 +731,7 @@ cdef inline tuple real_time_phase_linking_iterate(float complex[:,::1] full_stac
             for i in range(num_archived):
                 archive_stack[i, t] = full_stack_complex_samples[i, t]
 
-        vec_refined1, compressed_arch, temp_quality, max_coh_index = sequential_phase_linking_cy(archive_stack, b'sequential_EMI',
+        vec_refined, compressed_arch, temp_quality, max_coh_index = sequential_phase_linking_cy(archive_stack, b'sequential_EMI',
                                                                             mini_stack_default_size, num_archived_stacks)
         if compressed_arch.shape[0] == 1:
             max_coh_index_first = max_coh_index
@@ -756,25 +744,18 @@ cdef inline tuple real_time_phase_linking_iterate(float complex[:,::1] full_stac
             existing_compressed = True
 
         amp_arch = mean_along_axis_x(absmat2(archive_stack))
-        vec_refined = np.zeros(num_archived, dtype=np.complex64)
         for t in range(1, num_archived):
-            vec_refined1[t] = amp_arch[t] * vec_refined1[t]
-            vec_refined[t] = vec_refined1[t] * conjf(vec_refined1[t-1])
+            vec_refined[t] = amp_arch[t] * cexpf(1j * cargf(vec_refined[t]))
 
         ph_tmp = np.zeros(num_archived, dtype=np.complex64)
-        ph_tmp1 = np.zeros(num_archived, dtype=np.complex64)
         for i in range(num_archived):
             ph_tmp[i] = vec_refined[i]
-            ph_tmp1[i] = vec_refined1[i]
 
     else:
         first_new_image = 1
         num_old_images = 1
         ph_tmp = np.zeros(1, dtype=np.complex64)
         ph_tmp[0] = value0
-
-        ph_tmp1 = np.zeros(1, dtype=np.complex64)
-        ph_tmp1[0] = value0
 
 
     old_images = np.zeros((num_old_images, num_samples), dtype=np.complex64)
@@ -801,20 +782,16 @@ cdef inline tuple real_time_phase_linking_iterate(float complex[:,::1] full_stac
         ph_new[n_ph-1] = amp_refined * cexpf(1j * cargf(ph_new[n_ph-1]))
 
         vec_refined = np.zeros(t + 1, dtype=np.complex64)
-        vec_refined1 = np.zeros(t + 1, dtype=np.complex64)
         for i in range(t):
             vec_refined[i] = ph_tmp[i]
-            vec_refined1[i] = ph_tmp1[i]
-        vec_refined[t] = ph_new[n_ph - 1] * conjf(ph_new[n_ph - 2])
-        vec_refined1[t] = ph_new[n_ph - 1]
+
+        vec_refined[t] = ph_new[n_ph - 1]
 
         ph_tmp = np.zeros(t + 1, dtype=np.complex64)
-        ph_tmp1 = np.zeros(t + 1, dtype=np.complex64)
         for i in range(t + 1):
             ph_tmp[i] = vec_refined[i]
-            ph_tmp1[i] = vec_refined1[i]
 
-    return vec_refined, compressed, temp_quality, vec_refined1, max_coh_index_first
+    return vec_refined, compressed, temp_quality, max_coh_index_first
 
 
 cdef inline tuple sequential_phase_linking_cy(float complex[:,::1] full_stack_complex_samples,
@@ -1290,15 +1267,6 @@ cdef cnp.ndarray[float complex, ndim=3] read_padded(object slcStackObj, cnp.ndar
 
     patch_slc_images = slcStackObj.read(datasetName='slc', box=box, print_msg=False)
 
-    #for i in range(0, box[3] - box[1]):
-    #    for t in range(0, box[2] - box[0]):
-    #        if not np.isnan(patch_slc_images[:, i, t]).all():
-    #            if np.isnan(patch_slc_images[:, i, t]).any():
-    #                y = patch_slc_images[:, i, t].flatten()
-    #                nans, x = nan_helper(patch_slc_images[:, i, t].flatten())
-    #                y[nans] = np.interp(x(nans), x(~nans), y[~nans])
-    #                patch_slc_images[:, i, t] = y  #np.nan_to_num(patch_slc_images[:, i, t], copy=False)
-
     patch_slc_images_padded[:, :, :] = np.pad(patch_slc_images, padding, mode='empty')[:, :, :]
     return patch_slc_images_padded
 
@@ -1310,23 +1278,6 @@ cdef cnp.ndarray[int, ndim=1] get_big_box_cy(cnp.ndarray[int, ndim=1] box, int r
     big_box[3] = box[3] + azimuth_window
     return big_box
 
-cdef nan_helper(cnp.ndarray[float complex, ndim=1] y):
-    """Helper to handle indices and logical indices of NaNs.
-
-    Input:
-        - y, 1d numpy array with possible NaNs
-    Output:
-        - nans, logical indices of NaNs
-        - index, a function, with signature indices= index(logical_indices),
-          to convert logical indices of NaNs to 'equivalent' indices
-    Example:
-        >>> # linear interpolation of NaNs
-        >>> nans, x= nan_helper(y)
-        >>> y[nans]= np.interp(x(nans), x(~nans), y[~nans])
-    """
-
-    return np.isnan(y), lambda z: z.nonzero()[0]
-
 def process_patch_c(cnp.ndarray[int, ndim=1] box, int range_window, int azimuth_window, int width, int length, int n_image,
                     object slcStackObj, float distance_threshold, cnp.ndarray[int, ndim=1] def_sample_rows,
                     cnp.ndarray[int, ndim=1] def_sample_cols, int reference_row, int reference_col,
@@ -1336,11 +1287,8 @@ def process_patch_c(cnp.ndarray[int, ndim=1] box, int range_window, int azimuth_
     cdef cnp.ndarray[int, ndim=1] big_box = get_big_box_cy(box, range_window, azimuth_window, width, length)
     cdef int box_width = box[2] - box[0]
     cdef int box_length = box[3] - box[1]
-    #cdef cnp.ndarray[bint, ndim=1] nans
-    #cdef object x
-    #cdef cnp.ndarray[float complex, ndim=1] y
     cdef cnp.ndarray[int, ndim=2] reference_index = np.zeros((box_length, box_width), dtype=np.int32)
-    cdef cnp.ndarray[float complex, ndim=3] rslc_ref_seq, rslc_ref = np.zeros((n_image, box_length, box_width), dtype=np.complex64)
+    cdef cnp.ndarray[float complex, ndim=3] rslc_ref = np.zeros((n_image, box_length, box_width), dtype=np.complex64)
     cdef cnp.ndarray[float, ndim=3] tempCoh = np.zeros((2, box_length, box_width), dtype=np.float32)
     cdef cnp.ndarray[float, ndim=3] PSprod = np.zeros((4, box_length, box_width), dtype=np.float32)
     cdef cnp.ndarray[int, ndim=2] mask_ps = np.zeros((box_length, box_width), dtype=np.int32)
@@ -1358,10 +1306,8 @@ def process_patch_c(cnp.ndarray[int, ndim=1] box, int range_window, int azimuth_
     cdef (int, int) data
     cdef int[:, ::1] shp
     cdef cnp.ndarray[float complex, ndim=3] patch_slc_images = read_padded(slcStackObj, big_box, length, width, n_image)
-    # slcStackObj.read(datasetName='slc', box=big_box, print_msg=False)
     cdef float complex[:, ::1] CCG, coh_mat, squeezed_images
     cdef float complex[::1] vec, vec_refined = np.empty(n_image, dtype=np.complex64)
-    cdef float complex[::1] vec_refined1 = np.empty(n_image, dtype=np.complex64)
     cdef float[::1] amp_refined =  np.zeros(n_image, dtype=np.float32)
     cdef bint noise = False
     cdef float temp_quality, temp_quality_full, denom
@@ -1374,9 +1320,6 @@ def process_patch_c(cnp.ndarray[int, ndim=1] box, int range_window, int azimuth_
     cdef int[:, ::1] mask = np.ones((box_length, box_width), dtype=np.int32)
 
     max_coh_index = 0
-
-    if phase_linking_method[0:9] == b'real_time':
-        rslc_ref_seq = np.zeros((n_image, box_length, box_width), dtype=np.complex64)
 
     if os.path.exists(mask_file.decode('UTF-8')):
         mask = (readfile.read(mask_file.decode('UTF-8'),
@@ -1401,10 +1344,9 @@ def process_patch_c(cnp.ndarray[int, ndim=1] box, int range_window, int azimuth_
     for i in range(num_points):
         ps = 0
         data = (coords[i,0], coords[i,1])
+
         if mask[data[0] - row1, data[1] - col1] and not np.isnan(patch_slc_images[:, data[0], data[1]]).any():
 
-            #num_shp = SHP[data[0] - row1, data[1] - col1]
-            #if num_shp == 0:
             shp = get_shp_row_col_c(data, patch_slc_images, def_sample_rows, def_sample_cols, azimuth_window,
                                     range_window, reference_row, reference_col, distance_threshold, shp_test)
 
@@ -1416,15 +1358,12 @@ def process_patch_c(cnp.ndarray[int, ndim=1] box, int range_window, int azimuth_
                     CCG[m, t] = patch_slc_images[m, shp[t,0], shp[t,1]]
 
             coh_mat = est_corr_cy(CCG)
-            #temp_quality = 0
             if num_shp <= ps_shp:
                 max_coh_index = 0
                 x0 = conjf(patch_slc_images[0, data[0], data[1]])
                 for m in range(n_image):
                     vec_refined[m] = patch_slc_images[m, data[0], data[1]]  * x0
                     amp_refined[m] = cabsf(patch_slc_images[m, data[0], data[1]])
-                    #rslc_ref[m, data[0] - row1, data[1] - col1] = amp_refined[m] * amp_refined[0] * cexpf(1j * cargf(vec_refined[m])) / \
-                    #                                              sqrt(amp_refined[m] ** 2 * (amp_refined[0] ** 2))
 
                 temp_quality, vec, amp_disp, eigv1, eigv2, top_percent = test_PS_cy(coh_mat, amp_refined)
                 PSprod[0, data[0] - row1, data[1] - col1] = amp_disp
@@ -1438,26 +1377,17 @@ def process_patch_c(cnp.ndarray[int, ndim=1] box, int range_window, int azimuth_
                     vec_refined = vec
                 temp_quality_full = temp_quality
 
-                if phase_linking_method[0:9] == b'real_time':
-                    vec_refined1[0] = patch_slc_images[0, data[0], data[1]]  * x0
-                    rslc_ref_seq[0, data[0] - row1, data[1] - col1] = rslc_ref[0, data[0] - row1, data[1] - col1]
-                    for m in range(1, n_image):
-                        x0 = conjf(patch_slc_images[m-1, data[0], data[1]])
-                        vec_refined1[m] = patch_slc_images[m, data[0], data[1]] * x0
-                        rslc_ref_seq[m, data[0] - row1, data[1] - col1] = vec_refined1[m]/ sqrt(cabsf(vec_refined1[m]) ** 2 * cabsf(x0 ** 2))
-
             else:
 
                 if phase_linking_method[0:9] == b'real_time':
-                    vec_refined, squeezed_images, temp_quality, vec_refined1, max_coh_index = real_time_phase_linking_iterate(CCG,
+                    vec_refined, squeezed_images, temp_quality, max_coh_index = real_time_phase_linking_iterate(CCG,
                                                                                              default_mini_stack_size,
                                                                                              phase_linking_method,
                                                                                              num_archived)
 
                     temp_quality_full = temp_quality
                     for m in range(n_image):
-                            rslc_ref_seq[m, data[0] - row1, data[1] - col1] = vec_refined[m]
-                            rslc_ref[m, data[0] - row1, data[1] - col1] = vec_refined1[m]
+                            amp_refined[m] = cabsf(vec_refined[m])
 
                 else:
 
@@ -1474,11 +1404,11 @@ def process_patch_c(cnp.ndarray[int, ndim=1] box, int range_window, int azimuth_
                     amp_refined = mean_along_axis_x(absmat2(CCG))
                     temp_quality_full = gam_pta_c(angmat2(coh_mat), vec_refined)
 
-                    for m in range(n_image):
-                        if m == 0:
-                            rslc_ref[0, data[0] - row1, data[1] - col1] = amp_refined[0] * cexpf(1j * 0)
-                        else:
-                            rslc_ref[m, data[0] - row1, data[1] - col1] = amp_refined[m] * cexpf(1j * cargf(vec_refined[m]))
+            for m in range(n_image):
+                if m == 0:
+                    rslc_ref[0, data[0] - row1, data[1] - col1] = amp_refined[0] * cexpf(1j * 0)
+                else:
+                    rslc_ref[m, data[0] - row1, data[1] - col1] = amp_refined[m] * cexpf(1j * cargf(vec_refined[m]))
 
             if temp_quality < 0:
                 temp_quality = 0
@@ -1495,23 +1425,11 @@ def process_patch_c(cnp.ndarray[int, ndim=1] box, int range_window, int azimuth_
             for m in range(n_image):
                     rslc_ref[m, data[0] - row1, data[1] - col1] = patch_slc_images[m, data[0], data[1]]  * x0
 
-            if phase_linking_method[0:9] == b'real_time':
-                rslc_ref_seq[0, data[0] - row1, data[1] - col1] = cexpf(1j * cargf(patch_slc_images[0, data[0], data[1]] * x0))
-                for m in range(1, n_image):
-                    x0 = conjf(patch_slc_images[m-1, data[0], data[1]])
-                    rslc_ref_seq[m, data[0] - row1, data[1] - col1] = patch_slc_images[m, data[0], data[1]] * x0
 
-        if np.sum(np.angle(rslc_ref[:, data[0] - row1, data[1] - col1]))==0:
-            rslc_ref[:, data[0] - row1, data[1] - col1] = np.nan
-            tempCoh[0, data[0] - row1, data[1] - col1] = 0
-            tempCoh[1, data[0] - row1, data[1] - col1] = 0
-
-        reference_index[data[0] - row1, data[1] - col1] = max_coh_index
+        #reference_index[data[0] - row1, data[1] - col1] = max_coh_index
         prog_bar.update(p + 1, every=500, suffix='{}/{} pixels, patch {}'.format(p + 1, num_points, index))
         p += 1
 
-    if phase_linking_method[0:9] == b'real_time':
-        np.save(out_folder.decode('UTF-8') + '/phase_ref_seq.npy', rslc_ref_seq)
     np.save(out_folder.decode('UTF-8') + '/phase_ref.npy', rslc_ref)
     np.save(out_folder.decode('UTF-8') + '/shp.npy', SHP)
     np.save(out_folder.decode('UTF-8') + '/tempCoh.npy', tempCoh)

@@ -25,12 +25,14 @@ from isceobj.Util.ImageUtil import ImageLib as IML
 from contrib.UnwrapComp.unwrapComponents import UnwrapComponents
 from miaplpy.objects.arg_parser import MiaplPyParser
 import numpy as np
-from osgeo import gdal
+from osgeo import gdal, osr
 import subprocess
 import glob
 import time
 import datetime
 enablePrint()
+
+gdal.UseExceptions()
 
 def main(iargs=None):
     """
@@ -81,10 +83,13 @@ def main(iargs=None):
         unwrap_2stage(inpFile, ccFile, outFile, unwrapper_2stage_name=None, solver_2stage=None)
 
     if inps.remove_filter_flag and not os.path.exists(inps.unwrapped_ifg + '.old'):
-        input_ifg_nofilter = inps.input_ifg.split('_filt')[0] + '.int'
+        input_ifg_nofilter = inps.input_ifg.split('.')[0] + '_nofilt.int'
         remove_filter(input_ifg_nofilter, inps.input_ifg, inps.unwrapped_ifg)
 
     print('Time spent: {} m'.format((time.time() - time0)/60))
+
+    write_projection(inps.input_ifg, inps.unwrapped_ifg)
+    write_projection(inps.input_ifg, inps.unwrapped_ifg + '.conncomp')
 
     return
 
@@ -230,6 +235,40 @@ class Snaphu:
 
         return
 
+
+def get_projection(src_file):
+    ds_src = gdal.Open(src_file)
+    projection = ds_src.GetProjection()
+    geotransform = ds_src.GetGeoTransform()
+    nodata = ds_src.GetRasterBand(1).GetNoDataValue()
+
+    wkt = ds_src.GetProjectionRef()
+    sr = osr.SpatialReference()
+    sr.ImportFromWkt(wkt)
+    if sr.IsProjected() and "UTM" in sr.GetAttrValue("PROJCS"):
+        zone_number = sr.GetAttrValue("PROJCS")[-3::]
+    else:
+        zone_number = None
+
+    return projection, geotransform, nodata
+
+
+def write_projection(src_file, dst_file):
+
+    projection, geotransform, nodata = get_projection(src_file)
+    ds_dst = gdal.Open(dst_file, gdal.GA_Update)
+    if geotransform is not None and geotransform != (0, 1, 0, 0, 0, 1):
+        ds_dst.SetGeoTransform(geotransform)
+
+    if projection is not None and projection != "":
+        ds_dst.SetProjection(projection)
+
+    if nodata is not None:
+        ds_dst.GetRasterBand(1).SetNoDataValue(nodata)
+
+    ds_src = ds_dst = None
+
+    return
 
 def runUnwrap(infile, outfile, corfile, config, unwrap_2stage=False):
     from contrib.Snaphu.Snaphu import Snaphu

@@ -82,7 +82,7 @@ def main(iargs=None):
     if not inps.no_metadata_check:
         mut.prepare_metadata(iDict)
 
-    # skip data writing for aria and isce3 as it is included in prep_aria and prep_isce3
+    # skip data writing for aria and isce3 as it is included in prep_aria
     if iDict['processor'] in ['aria']:
         return
     iDict = mut.read_subset_box(iDict)
@@ -114,8 +114,7 @@ def main(iargs=None):
 
 
     # write
-    if stackObj and mld.run_or_skip(inps.out_file[0], stackObj, box, updateMode=updateMode,
-                                      xstep=iDict['xstep'], ystep=iDict['ystep']):
+    if stackObj and mld.run_or_skip(inps.out_file[0], stackObj, box, updateMode=updateMode):
         print('-' * 50)
         if iDict['processor']=='isce3':
             isce3_run_or_skip = 'run'
@@ -195,7 +194,7 @@ def read_inps_dict2geometry_dict_object(inpsDict):
         key = datasetName2templateKey[dsName]
         if key in inpsDict.keys():
             if inpsDict['processor'] == 'isce3':
-                files = sorted(glob.glob(str(inpsDict[key])))
+                files = sorted(glob.glob(str(inpsDict[key]+'/*/static*.h5')))
             else:
                 files = sorted(glob.glob(str(inpsDict[key]) + '.xml'))
                 files = [item.split('.xml')[0] for item in files]

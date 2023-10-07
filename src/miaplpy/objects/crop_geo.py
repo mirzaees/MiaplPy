@@ -230,20 +230,19 @@ class cropSLC:
         self.geo_bbox = geo_bbox
         self.bb_utm = None
         self.rdr_bbox = None
-        self.crs, self.geotransform, self.shape = self.get_transform(dsname0)
+        self.geotransform, self.shape = self.get_transform(dsname0)
         self.length, self.width = self.shape
 
         self.lengthc, self.widthc = self.get_size()
 
     def get_transform(self, src_file):
-        import pdb; pdb.set_trace()
         with h5py.File(src_file, 'r') as ds:
             dsg = ds['data']['projection'].attrs
             xcoord = ds['data']['x_coordinates'][()]
             ycoord = ds['data']['y_coordinates'][()]
             shape = (ds['data']['y_coordinates'].shape[0], ds['data']['x_coordinates'].shape[0])
-            #crs = CRS.from_wkt(dsg['spatial_ref'].decode("utf-8"))
-            crs = dsg['spatial_ref'].decode("utf-8")
+            crs = CRS.from_wkt(dsg['spatial_ref'].decode("utf-8"))
+            # crs = dsg['spatial_ref'].decode("utf-8")
             x_step = float(ds['data']['x_spacing'][()])
             y_step = float(ds['data']['y_spacing'][()])
             x_first = min(ds['data']['x_coordinates'][()])
@@ -273,7 +272,7 @@ class cropSLC:
 
         self.rdr_bbox = (col1, row1, col2, row2)
 
-        return crs, geotransform, shape
+        return geotransform, shape
 
     def get_subset_transform(self):
         # Define the cropping extent

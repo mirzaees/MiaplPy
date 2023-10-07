@@ -15,18 +15,20 @@ from miaplpy.objects.crop_geo import create_grid_mapping, create_tyx_dsets
 from . cimport utils
 from.utils import process_patch_c
 
+gdal.UseExceptions()
 
 DEFAULT_TILE_SIZE = [128, 128]
+DEFAULT_ENVI_OPTIONS = (
+        "INTERLEAVE=BIL",
+        "SUFFIX=ADD"
+    )
+
 DEFAULT_TIFF_OPTIONS = (
     "COMPRESS=DEFLATE",
     "ZLEVEL=4",
     "TILED=YES",
     f"BLOCKXSIZE={DEFAULT_TILE_SIZE[1]}",
     f"BLOCKYSIZE={DEFAULT_TILE_SIZE[0]}",
-)
-DEFAULT_ENVI_OPTIONS = (
-    "INTERLEAVE=BIL",
-    "SUFFIX=ADD"
 )
 
 
@@ -106,21 +108,18 @@ cdef class CPhaseLink:
         return
 
     def get_projection(self, slc_stack):
-        cdef object ds, gt, projection
+        cdef object ds, gt
         cdef str projection
-        cdef tuple geotransform #, extent
+        cdef list geotransform #, extent
         with h5py.File(slc_stack, 'r') as ds:
             attrs = dict(ds.attrs)
-            projection = attrs['spatial_ref'][3:-1]
-            geotransform = [attrs['X_FIRST'], attrs['X_STEP'], 0, attrs['Y_FIRST'], 0, attrs['Y_STEP']]
-            geotransform = [float(x) for x in geotransform]
-
-            #if 'spatial_ref' in ds:
-            #    geotransform = tuple([int(float(x)) for x in ds['spatial_ref'].attrs['GeoTransform'].split()])
-            #    projection = CRS.from_wkt(ds['spatial_ref'].attrs['crs_wkt'])
-            #else:
-            #    geotransform = (0, 1, 0, 0, 0, 1)
-            #    projection = CRS.from_epsg(4326)
+            if 'spatial_ref' in attrs:
+                projection = attrs['spatial_ref']
+                geotransform = [attrs['X_FIRST'], attrs['X_STEP'], 0, attrs['Y_FIRST'], 0, attrs['Y_STEP']]
+                geotransform = [float(x) for x in geotransform]
+            else:
+                geotransform = [0, 1, 0, 0, 0, 1]
+                projection = None
 
         return projection, geotransform
 
@@ -130,12 +129,16 @@ cdef class CPhaseLink:
         cdef double[::1] tt
         cdef double st
         with h5py.File(slc_stack) as ds:
-            tt = ds['time'][()]
-            ff = datetime.strptime(ds['time'].attrs['units'].split('seconds since ')[1], '%Y-%m-%d %H:%M:%S.%f')
-            ft = datetime.strptime('19691231-16', '%Y%m%d-%H')
-            st = (ff - ft).total_seconds()
-            dates = [datetime.fromtimestamp(t+st) for t in tt]
-        return [t.strftime('%Y%m%d') for t in dates]
+            if 'time' in ds.keys():
+                tt = ds['time'][()]
+                ff = datetime.strptime(ds['time'].attrs['units'].split('seconds since ')[1], '%Y-%m-%d %H:%M:%S.%f')
+                ft = datetime.strptime('19691231-16', '%Y%m%d-%H')
+                st = (ff - ft).total_seconds()
+                dates = [datetime.fromtimestamp(t+st) for t in tt]
+                dates = [t.strftime('%Y%m%d') for t in dates]
+            else:
+                dates = [x.decode('utf-8') for x in ds['date'][()]]
+        return dates
 
 
     def patch_slice(self):
@@ -309,31 +312,29 @@ cdef class CPhaseLink:
         print('time used: {:02.0f} mins {:02.1f} secs.\n'.format(m, s))
         return
 
-    def set_projection_hdf(self, object fhandle, object projection, tuple geotransform):
+    def set_projection_hdf(self, object fhandle, str projection, list geotransform):
         # cdef object grp
 
-        create_grid_mapping(group=fhandle, crs=projection, gt=list(geotransform))
+        create_grid_mapping(group=fhandle, crs=projection, gt=geotransform)
 
-        #if "georeference" in fhandle:
-        #    grp = fhandle["georeference"]
-        #else:
-        #    grp = fhandle.create_group("georeference")
-
-        #if not "transform" in grp.keys():
-        #    grp.create_dataset("transform", data=geotransform, dtype=np.float32)
-        #grp.attrs["crs"] = projection
-        #grp.attrs["extent"] = crop_extent
-        #grp.attrs["pixel_size_x"] = self.pixel_width
-        #grp.attrs["pixel_size_y"] = self.pixel_height
         return
 
     def set_projection_gdal1_int(self, cnp.ndarray[int, ndim=2] data, int bands, bytes output, str description,
-                             str projection, tuple geotransform):
+                             str projection, list geotransform):
         cdef object driver, dataset, band1, target_crs
-        driver = gdal.GetDriverByName('ENVI')
-        dataset = driver.Create(output, self.width, self.length, 1, gdal.GDT_Int16, DEFAULT_ENVI_OPTIONS)
-        dataset.SetGeoTransform(list(geotransform))
-        dataset.SetProjection(projection) #.to_wkt()) #target_crs.ExportToWkt())
+        if projection is None:
+            driver_name='ENVI'
+            default_options = DEFAULT_ENVI_OPTIONS
+        else:
+            driver_name = 'GTiff'
+            default_options = DEFAULT_TIFF_OPTIONS
+
+
+        driver = gdal.GetDriverByName(driver_name)
+        dataset = driver.Create(output, self.width, self.length, 1, gdal.GDT_Int16, default_options)
+        dataset.SetGeoTransform(geotransform)
+        if not projection is None:
+            dataset.SetProjection(projection)
         band1 = dataset.GetRasterBand(1)
         band1.SetDescription(description)
         gdal_array.BandWriteArray(band1, data, xoff=0, yoff=0)
@@ -346,17 +347,28 @@ cdef class CPhaseLink:
         return
 
     def set_projection_gdal1(self, cnp.ndarray[float, ndim=2] data, int bands, bytes output, str description,
-                             str projection, tuple geotransform):
+                             str projection, list geotransform):
         cdef object driver, dataset, band1, target_crs
-        driver = gdal.GetDriverByName('ENVI')
-        dataset = driver.Create(output, self.width, self.length, 1, gdal.GDT_Float32, DEFAULT_ENVI_OPTIONS)
-        dataset.SetGeoTransform(list(geotransform))
-        dataset.SetProjection(projection) #.to_wkt()) #target_crs.ExportToWkt())
+        if projection is None:
+            driver_name='ENVI'
+            default_options = DEFAULT_ENVI_OPTIONS
+        else:
+            driver_name = 'GTiff'
+            default_options = DEFAULT_TIFF_OPTIONS
+
+        driver = gdal.GetDriverByName(driver_name)
+        dataset = driver.Create(output, self.width, self.length, 1, gdal.GDT_Float32, default_options)
+        dataset.SetGeoTransform(geotransform)
+        if not projection is None:
+            dataset.SetProjection(projection)
         band1 = dataset.GetRasterBand(1)
         band1.SetDescription(description)
         gdal_array.BandWriteArray(band1, data, xoff=0, yoff=0)
         # band1.WriteArray(data, xoff=0, yoff=0)
-        band1.SetNoDataValue(np.nan)
+        if description in ['Temporal coherence average', 'Temporal coherence full']:
+            band1.SetNoDataValue(0)
+        else:
+            band1.SetNoDataValue(np.nan)
 
         dataset.FlushCache()
         dataset = None
@@ -364,11 +376,18 @@ cdef class CPhaseLink:
         return
 
     def set_projection_gdalm(self, cnp.ndarray[float, ndim=3] data, int bands, bytes output, list description,
-                             str projection, tuple geotransform):
+                             str projection, list geotransform):
         cdef int i
         cdef object driver, dataset, band
-        driver = gdal.GetDriverByName('ENVI')
-        dataset = driver.Create(output, self.width, self.length, bands, gdal.GDT_Float32, DEFAULT_ENVI_OPTIONS)
+        if projection is None:
+            driver_name='ENVI'
+            default_options = DEFAULT_ENVI_OPTIONS
+        else:
+            driver_name = 'GTiff'
+            default_options = DEFAULT_TIFF_OPTIONS
+
+        driver = gdal.GetDriverByName(driver_name)
+        dataset = driver.Create(output, self.width, self.length, bands, gdal.GDT_Float32, default_options)
 
         for i in range(bands):
             band = dataset.GetRasterBand(i+1)
@@ -378,8 +397,9 @@ cdef class CPhaseLink:
             band.SetNoDataValue(np.nan)
             del band
 
-        dataset.SetGeoTransform(list(geotransform))
-        dataset.SetProjection(projection) #.to_wkt())
+        dataset.SetGeoTransform(geotransform)
+        if not projection is None:
+            dataset.SetProjection(projection) #.to_wkt())
         dataset.FlushCache()
         dataset = None
 
@@ -396,8 +416,8 @@ cdef class CPhaseLink:
         cdef cnp.ndarray[float, ndim=3] temp_coh, ps_prod, eig_values = np.zeros((3, self.length, self.width), dtype=np.float32)
         cdef cnp.ndarray[float, ndim=2] amp_disp = np.zeros((self.length, self.width), dtype=np.float32)
         cdef cnp.ndarray[int, ndim=2] reference_index_map = np.zeros((self.length, self.width), dtype=np.int32)
-        cdef int projection
-        cdef tuple geotransform
+        # cdef int projection
+        cdef list geotransform
 
         if os.path.exists(self.RSLCfile.decode('UTF-8')):
             print('Deleting old phase_series.h5 ...')
@@ -458,27 +478,29 @@ cdef class CPhaseLink:
             ###
             print('close HDF5 file phase_series.h5.')
 
+            print('write averaged temporal coherence file from mini stacks')
+            temp_coh_file = self.out_dir + b'/tempCoh_average.tif'
+            self.set_projection_gdal1(fhandle['temporalCoherence'][0, :, :], 1,
+                                      temp_coh_file, 'Temporal coherence average', projection, geotransform)
+            temp_coh_file = self.out_dir + b'/tempCoh_full.tif'
+            self.set_projection_gdal1(fhandle['temporalCoherence'][1, :, :], 1,
+                                      temp_coh_file, 'Temporal coherence full', projection, geotransform)
+
             print('write amplitude dispersion and top eigen values')
-            amp_disp_file = self.out_dir + b'/amp_dipersion_index'
+            amp_disp_file = self.out_dir + b'/amp_dipersion_index.tif'
             self.set_projection_gdal1(amp_disp, 1,
                                       amp_disp_file, 'Amplitude dispersion index', projection, geotransform)
             #self.set_projection_gdal1(amp_disp, 1, amp_disp_file, 'Amplitude dispersion index', projection, geotransform)
-            top_eig_files = self.out_dir + b'/top_eigenvalues'
+            top_eig_files = self.out_dir + b'/top_eigenvalues.tif'
             self.set_projection_gdalm(np.array(eig_values), 3, top_eig_files,
                                       ['Top eigenvalue 1', 'Top eigenvalue 2', 'Top eigenvalue 3'], projection, geotransform)
-            print('write averaged temporal coherence file from mini stacks')
-            temp_coh_file = self.out_dir + b'/tempCoh_average'
-            self.set_projection_gdal1(fhandle['temporalCoherence'][0, :, :], 1,
-                                      temp_coh_file, 'Temporal coherence average', projection, geotransform)
-            temp_coh_file = self.out_dir + b'/tempCoh_full'
-            self.set_projection_gdal1(fhandle['temporalCoherence'][1, :, :], 1,
-                                      temp_coh_file, 'Temporal coherence full', projection, geotransform)
-            ref_index_file = self.out_dir + b'/reference_index'
+            
+            ref_index_file = self.out_dir + b'/reference_index.tif'
             self.set_projection_gdal1_int(reference_index_map, 1,
                                       ref_index_file, 'Reference index map', projection, geotransform)
 
             ##
-            ref_index_file = self.out_dir + b'/reference_index'
+            ref_index_file = self.out_dir + b'/reference_index.tif'
             self.set_projection_gdal1_int(reference_index_map, 1,
                                       ref_index_file, 'Reference index map', projection, geotransform)
 

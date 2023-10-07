@@ -36,7 +36,7 @@ def main(iargs=None):
     miaplpy_dir = os.path.dirname(os.path.dirname(inps.geometry_stack))
 
     shadow_mask = os.path.join(miaplpy_dir, 'shadow_mask.h5')
-    corr_file = os.path.join(miaplpy_dir, 'inverted/tempCoh_average')
+    corr_file = os.path.join(miaplpy_dir, 'inverted/tempCoh_average.tif')
 
     cg = gdal.Open(corr_file)
     cg_data = cg.GetRasterBand(1).ReadAsArray()

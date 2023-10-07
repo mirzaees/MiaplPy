@@ -20,16 +20,27 @@ import numpy as np
 from miaplpy.objects.arg_parser import MiaplPyParser
 import h5py
 from math import sqrt, exp
-from osgeo import gdal
+from osgeo import gdal, osr
 import dask.array as da
 from pyproj import CRS
 
+gdal.UseExceptions()
+
 enablePrint()
 
+DEFAULT_TILE_SIZE = [128, 128]
 DEFAULT_ENVI_OPTIONS = (
         "INTERLEAVE=BIL",
         "SUFFIX=ADD"
     )
+
+DEFAULT_TIFF_OPTIONS = (
+    "COMPRESS=DEFLATE",
+    "ZLEVEL=4",
+    "TILED=YES",
+    f"BLOCKXSIZE={DEFAULT_TILE_SIZE[1]}",
+    f"BLOCKYSIZE={DEFAULT_TILE_SIZE[0]}",
+)
 
 
 def main(iargs=None):
@@ -54,13 +65,13 @@ def main(iargs=None):
     print(inps.out_dir)
     os.makedirs(inps.out_dir, exist_ok=True)
 
-    ifg_file = inps.out_dir + "/filt_fine.int"
-    cor_file = inps.out_dir + "/filt_fine.cor"
+    ifg_file = inps.out_dir + f"/{inps.reference}_{inps.secondary}.int.tif"
+    cor_file = inps.out_dir + f"/{inps.reference}_{inps.secondary}.cor.tif"
 
-    run_inreferogram(inps, ifg_file)
+    geotransform, projection, nodata = run_inreferogram(inps, ifg_file)
 
     window_size = (6, 12)
-    estimate_correlation(ifg_file, cor_file, window_size)
+    estimate_correlation(ifg_file, cor_file, window_size, geotransform, projection, nodata)
 
     return
 
@@ -68,9 +79,25 @@ def main(iargs=None):
 def run_inreferogram(inps, ifg_file):
 
     if os.path.exists(ifg_file):
-        return
+        sys.exit()
+        # return
 
     with h5py.File(inps.stack_file, 'r') as ds:
+        attrs = dict(ds.attrs)
+        if 'spatial_ref' in attrs.keys():
+            projection = attrs['spatial_ref']  # CRS.from_wkt(attrs['spatial_ref'])
+            geotransform = [attrs['X_FIRST'], attrs['X_STEP'], 0, attrs['Y_FIRST'], 0, attrs['Y_STEP']]
+            geotransform = [float(x) for x in geotransform]
+            nodata = np.nan
+            drivername = 'GTiff'
+            default_options = DEFAULT_TIFF_OPTIONS
+        else:
+            geotransform = 'None'
+            projection = 'None'
+            nodata = np.nan
+            drivername = 'ENVI'
+            default_options = DEFAULT_ENVI_OPTIONS
+
         date_list = np.array([x.decode('UTF-8') for x in ds['date'][:]])
         ref_ind = np.where(date_list == inps.reference)[0]
         sec_ind = np.where(date_list == inps.secondary)[0]
@@ -82,8 +109,8 @@ def run_inreferogram(inps, ifg_file):
         box_size = 3000
 
         dtype = gdal.GDT_CFloat32
-        driver = gdal.GetDriverByName('ENVI')
-        out_raster = driver.Create(ifg_file, width, length, 1, dtype, DEFAULT_ENVI_OPTIONS)
+        driver = gdal.GetDriverByName(drivername)
+        out_raster = driver.Create(ifg_file, width, length, 1, dtype, default_options)
         band = out_raster.GetRasterBand(1)
 
         for i in range(0, length, box_size):
@@ -98,17 +125,19 @@ def run_inreferogram(inps, ifg_file):
         out_raster.FlushCache()
         out_raster = None
 
-    write_projection(inps.stack_file, ifg_file)
+    write_projection(ifg_file, geotransform, projection, nodata)
 
-    return
+    return geotransform, projection, nodata
 
 
-def write_projection(src_file, dst_file) -> None:
+def write_projection(dst_file, geotransform, projection, nodata) -> None:
+    '''
     if src_file.endswith('.h5'):
         with h5py.File(src_file, 'r') as ds:
             attrs = dict(ds.attrs)
             if 'spatial_ref' in attrs.keys():
-                projection = attrs['spatial_ref'][3:-1]
+                #projection = attrs['spatial_ref'][3:-1]
+                projection = attrs['spatial_ref'] #CRS.from_wkt(attrs['spatial_ref'])
                 geotransform = [attrs['X_FIRST'], attrs['X_STEP'], 0, attrs['Y_FIRST'], 0, attrs['Y_STEP']]
                 geotransform = [float(x) for x in geotransform]
                 nodata = np.nan
@@ -121,18 +150,27 @@ def write_projection(src_file, dst_file) -> None:
         projection = ds_src.GetProjection()
         geotransform = ds_src.GetGeoTransform()
         nodata = ds_src.GetRasterBand(1).GetNoDataValue()
-
-    ds_dst = gdal.Open(dst_file, gdal.GA_Update)
-    ds_dst.SetGeoTransform(geotransform)
-    ds_dst.SetProjection(projection)
-    ds_dst.GetRasterBand(1).SetNoDataValue(nodata)
-    ds_src = ds_dst = None
+    '''
+    if not geotransform == 'None':
+        ds_dst = gdal.Open(dst_file, gdal.GA_Update)
+        ds_dst.SetGeoTransform(geotransform)
+        ds_dst.SetProjection(projection)
+        ds_dst.GetRasterBand(1).SetNoDataValue(nodata)
+        ds_src = ds_dst = None
     return
 
 
-def estimate_correlation(ifg_file, cor_file, window_size):
+def estimate_correlation(ifg_file, cor_file, window_size, geotransform, projection, nodata):
     if os.path.exists(cor_file):
         return
+
+    if geotransform is None:
+        driver_name = 'ENVI'
+        default_options = DEFAULT_ENVI_OPTIONS
+    else:
+        driver_name = 'GTiff'
+        default_options = DEFAULT_TIFF_OPTIONS
+
     ds = gdal.Open(ifg_file)
     phase = ds.GetRasterBand(1).ReadAsArray()
     length, width = ds.RasterYSize, ds.RasterXSize
@@ -163,15 +201,15 @@ def estimate_correlation(ifg_file, cor_file, window_size):
     cor[zero_mask] = 0
 
     dtype = gdal.GDT_Float32
-    driver = gdal.GetDriverByName('ENVI')
-    out_raster = driver.Create(cor_file, width, length, 1, dtype, DEFAULT_ENVI_OPTIONS)
+    driver = gdal.GetDriverByName(driver_name)
+    out_raster = driver.Create(cor_file, width, length, 1, dtype, default_options)
     band = out_raster.GetRasterBand(1)
     band.WriteArray(cor, 0, 0)
     band.SetNoDataValue(np.nan)
     out_raster.FlushCache()
     out_raster = None
 
-    write_projection(ifg_file, cor_file)
+    write_projection(cor_file, geotransform, projection, nodata)
 
     return
 

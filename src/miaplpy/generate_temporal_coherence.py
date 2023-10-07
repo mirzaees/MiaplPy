@@ -116,7 +116,7 @@ def main(iargs=None):
                                 os.path.join(inps.work_dir, 'temporalCoherence_mintpy.h5')))
 
     quality_name = os.path.join(miaplpy_dir,
-                                'inverted/tempCoh_{}'.format(template['miaplpy.timeseries.tempCohType']))
+                                'inverted/tempCoh_{}.tif'.format(template['miaplpy.timeseries.tempCohType']))
     quality = np.memmap(quality_name, mode='r', dtype='float32', shape=(length, width))
 
     # inps.waterMaskFile = os.path.join(miaplpy_dir, 'waterMask.h5')

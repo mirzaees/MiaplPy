@@ -29,12 +29,13 @@ miaplpyApp = "miaplpy.miaplpyApp:main"
 'network_inversion.py' = "miaplpy.network_inversion:main"
 'phase_linking.py' = "miaplpy.phase_linking:main"
 'prep_slc_isce.py' = "miaplpy.prep_slc_isce:main"
+'prep_slc_isce3.py' = "miaplpy.prep_slc_isce3:load_isce3"
 'scatterview.py' = "miaplpy.scatterview:main"
 'simulation.py' = "miaplpy.simulation:simulate_and_calculate_different_method_rms"
 'tcoh_view.py' = "miaplpy.tcoh_view:main"
 'generate_ifgram.py' = "miaplpy.generate_ifgram:main"
 'unwrap_ifgram.py' = "miaplpy.unwrap_ifgram:main"
-
+'stitch_bursts.py' = "miaplpy.stitch_bursts:stitch_bursts"
 
 [tool.setuptools.packages.find]
 where = ["src"]

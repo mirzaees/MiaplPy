@@ -836,10 +836,10 @@ def read_binary_file(fname, datasetName=None, box=None, attributes_only=False):
         # reading
         print(fname)
         shape = (length, width)
-        data = readfile.read_binary(fname, shape, box=box, data_type=data_type, byte_order=byte_order,
-                    num_band=1, interleave=band_interleave, band=1, cpx_band=cpx_band,
-                    xstep=1, ystep=1)
-        # data = read_image(fname, box=box, band=band)
+        #data = readfile.read_binary(fname, shape, box=box, data_type=data_type, byte_order=byte_order,
+        #            num_band=1, interleave=band_interleave, band=1, cpx_band=cpx_band,
+        #            xstep=1, ystep=1)
+        data = read_image(fname, box=box, band=band)
         return data, atr
 
 
@@ -1454,7 +1454,7 @@ def prepare_metadata(inpsDict):
         #meta_file = glob.glob('{}/*/*.json'.format(slc_dir))[0]
         geo_files = ['miaplpy.load.demFile', 'miaplpy.load.lookupYFile', 'miaplpy.load.lookupXFile',
                      'miaplpy.load.incAngleFile', 'miaplpy.load.azAngleFile', 'miaplpy.load.shadowMaskFile']
-        geom_dir = [os.path.dirname(inpsDict[gfile]) for gfile in geo_files if inpsDict[gfile] is not 'auto'][0]
+        geom_dir = [os.path.abspath(inpsDict[gfile]) for gfile in geo_files if inpsDict[gfile] is not 'auto'][0]
         cmd = '{s} -t {t} -s {i} -f {f} -g {g}'.format(s=script_name,
                                                        t=inpsDict['template_file'][0],
                                                        i=slc_dir,
@@ -1614,9 +1614,10 @@ def read_inps_dict2slc_stack_dict_object(inpsDict):
 
     for dsPath in dsPathDict[dsName0]:
         if inpsDict['processor'] == 'isce3':
-            dates = dsPath.split('/')[-2]
-        else:
             dates = ptime.yyyymmdd(read_attribute(dsPath.split('.h5')[0], metafile_ext='.rsc')['DATE'])
+        else:
+            dates = dsPath.split('/')[-2]
+
         date_val = datetime.datetime.strptime(dates, '%Y%m%d')
         include_date = True
         if not start_date is None and start_date > date_val:

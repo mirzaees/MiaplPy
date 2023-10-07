@@ -21,15 +21,15 @@ miaplpy.load.processor      = isce3
 
 miaplpy.load.slcFile        = ${PROJECT_DIR}/gslcs/*/*/t*_iw*.h5
 miaplpy.load.unwFile        = ${WORK_DIR}/inverted/unwrap_${int_type}/*.unw
-miaplpy.load.corFile        = ${WORK_DIR}/inverted/interferograms_${int_type}/*.cor
+miaplpy.load.corFile        = ${WORK_DIR}/inverted/interferograms_${int_type}/*.cor.tif
 miaplpy.load.connCompFile   = ${WORK_DIR}/inverted/unwrap_${int_type}/*.unw.conncomp
 
-miaplpy.load.demFile        = ${PROJECT_DIR}/gslcs/${burst_id}/*/static_layers*.h5
-miaplpy.load.lookupYFile    = ${PROJECT_DIR}/gslcs/${burst_id}/*/static_layers*.h5
-miaplpy.load.lookupXFile    = ${PROJECT_DIR}/gslcs/${burst_id}/*/static_layers*.h5
-miaplpy.load.incAngleFile   = ${PROJECT_DIR}/gslcs/${burst_id}/*/static_layers*.h5
-miaplpy.load.azAngleFile    = ${PROJECT_DIR}/gslcs/${burst_id}/*/static_layers*.h5
-miaplpy.load.shadowMaskFile = ${PROJECT_DIR}/gslcs/${burst_id}/*/static_layers*.h5
+miaplpy.load.demFile        = ${PROJECT_DIR}/gslcs/${burst_id}
+miaplpy.load.lookupYFile    = ${PROJECT_DIR}/gslcs/${burst_id}
+miaplpy.load.lookupXFile    = ${PROJECT_DIR}/gslcs/${burst_id}
+miaplpy.load.incAngleFile   = ${PROJECT_DIR}/gslcs/${burst_id}
+miaplpy.load.azAngleFile    = ${PROJECT_DIR}/gslcs/${burst_id}
+miaplpy.load.shadowMaskFile = ${PROJECT_DIR}/gslcs/${burst_id}
 
 '''
 
@@ -40,7 +40,7 @@ miaplpy.load.baselineDir    = ${PROJECT_DIR}/baselines
 
 miaplpy.load.slcFile        = ${PROJECT_DIR}/merged/SLC/*/*.slc.full
 miaplpy.load.unwFile        = ${WORK_DIR}/inverted/unwrap_${int_type}/*.unw
-miaplpy.load.corFile        = ${WORK_DIR}/inverted/interferograms_${int_type}/*.cor
+miaplpy.load.corFile        = ${WORK_DIR}/inverted/interferograms_${int_type}/*.cor.tif
 miaplpy.load.connCompFile   = ${WORK_DIR}/inverted/unwrap_${int_type}/*.unw.conncomp
 miaplpy.load.ionoFile       = None
 miaplpy.load.intFile        = None 

@@ -14,11 +14,18 @@ fiona_logger = logging.getLogger('fiona')
 fiona_logger.propagate = False
 
 from miaplpy.objects.arg_parser import MiaplPyParser
-from miaplpy.lib import utils as iut
+#from miaplpy.lib import utils as iut
+from miaplpy.dev import utils as iut
 from miaplpy.lib import invert as iv
 import multiprocessing as mp
+from dask.diagnostics import ProgressBar
+from dask.distributed import Client
+from dask import delayed, persist, compute
+import dask.bag as db
+
 from functools import partial
 import signal
+
 
 #################################
 
@@ -80,6 +87,10 @@ def phase_invert(inps, inversionObj):
         if not os.path.exists(out_folder + '/flag.npy'):
             box_list.append(box)
 
+    if len(box_list) == 0:
+        return
+    
+    
     #print('Total number of PATCHES: {}'.format(len(inversionObj.box_list)))
     print('Remaining number of PATCHES/tasks: {}'.format(len(box_list)))
 
@@ -94,7 +105,8 @@ def phase_invert(inps, inversionObj):
         num_cores = num_workers
 
     print('Number of parallel tasks: {}'.format(num_cores))
-    pool = mp.Pool(num_cores, init_worker)
+    # pool = mp.Pool(num_cores, init_worker)
+    
     data_kwargs = inversionObj.get_datakwargs()
     os.makedirs(data_kwargs['out_dir'].decode('UTF-8') + '/PATCHES', exist_ok=True)
 
@@ -122,18 +134,45 @@ def phase_invert(inps, inversionObj):
 
     print('Reading SLC data from {} and inverting patches in parallel ...'.format(inps.slc_stack))
 
-    try:
-        pool.map(func, box_list)
-        pool.close()
-        pool.join()
-    except KeyboardInterrupt:
-        print("\nCaught KeyboardInterrupt, terminating workers")
-        pool.terminate()
-        pool.join()
+    # client = Client(threads_per_worker=4, n_workers=num_cores)
+    # b = db.from_sequence(box_list, npartitions=12)
+    # b = b.map(func)
+    # results_bag = b.compute()
+    
+    for box in box_list:
+        func(box)
+        # break
+       
+        
+    ######
+    '''
+    lazy_results = []
+    for boxx in box_list:
+        lazy_result = delayed(func)(boxx)
+        lazy_results.append(lazy_result)
 
+    futures = persist(*lazy_results)  # trigger computation in the background
+    client.cluster.scale(10)  # ask for ten 4-thread workers
+    results = compute(*futures)
+    
+    #######
+    futures = client.map(func, box_list)
+    results = client.gather(futures)
+    '''
+    ############
+    # try:
+    #     pool.map(func, box_list)
+    #     pool.close()
+    #     pool.join()
+    # except KeyboardInterrupt:
+    #     print("\nCaught KeyboardInterrupt, terminating workers")
+    #     pool.terminate()
+    #     pool.join()
+    
+    
     return
 
-
+        
 def concatenate_patches(inversionObj):
     completed = True
     for box in inversionObj.box_list:

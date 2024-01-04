@@ -209,7 +209,7 @@ def read_subset_box(inpsDict):
                           glob.glob(str(inpsDict['miaplpy.load.lookupXFile']))[0]]
         except:
             lookupFile = None
-
+    
     try:
         pathKey = [i for i in datasetName2templateKey.values()
                    if i in inpsDict.keys()][0]

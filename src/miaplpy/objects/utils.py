@@ -174,9 +174,8 @@ class coord_rev(coordinate):
             self.geocoded = False
             if self.lookup_file:
                 self.lut_metadata = read_attribute(self.lookup_file[0], metafile_ext='.xml')
-
+    
     def read_lookup_table(self, print_msg=True):
-
         if 'Y_FIRST' in self.lut_metadata.keys():
             self.lut_y = readfile.read(self.lookup_file[0],
                                        datasetName='azimuthCoord',
@@ -1158,42 +1157,47 @@ def get_raster_bounds(xcoord, ycoord, utm_bbox=None):
     if not utm_bbox is None:
         x_bounds.append([utm_bbox[0], utm_bbox[2]])
         y_bounds.append([utm_bbox[1], utm_bbox[3]])
+    minx = max(x_bounds, key=lambda x: x[0])[0]
+    miny = max(y_bounds, key=lambda x: x[0])[0]
+    maxx = min(x_bounds, key=lambda x: x[1])[1]
+    maxy = min(y_bounds, key=lambda x: x[1])[1]
 
-    bounds = max(x_bounds)[0], max(y_bounds)[0], min(x_bounds)[1], min(y_bounds)[1]
+    bounds = minx, miny, maxx, maxy
     return bounds
+
+
 
 def read_subset_box(inpsDict):
     import mintpy.load_data as mld
     from mintpy import subset
+    from shapely import wkt
+    
     # Read subset info from template
     inpsDict['box'] = None
     inpsDict['box4geo_lut'] = None
     pix_box, geo_box = read_subset_template2box(inpsDict['template_file'][0])
-
+    
     if inpsDict['processor'] == 'isce3':
         src_file = sorted(glob.glob(os.path.dirname(inpsDict['miaplpy.load.slcFile']) + '/static_layers*.h5'))[0]
         metadata = read_attribute(src_file.split('.')[-2] + '.rsc', metafile_ext='.rsc')
         with h5py.File(src_file, 'r') as f:
-            dsg = f['data']['projection'].attrs
+            wkt_string = f['/identification/bounding_polygon'][()].decode('utf-8')
+            bounds_lalo = wkt.loads(wkt_string).bounds   # (W,S,E,N) in degrees
+            dsg = f['data/projection'].attrs
             crs = CRS.from_wkt(dsg['spatial_ref'].decode("utf-8"))
-            xcoord = f['data']['x_coordinates'][()]
-            ycoord = f['data']['y_coordinates'][()]
-            ds = f['quality_assurance']['statistics']['static_layers']
-            latmax, lonmax = float(ds['y']['max'][()]), float(ds['x']['max'][()])   # degrees
-            lonmin, latmin = float(ds['x']['min'][()]), float(ds['y']['min'][()])   # degrees
+            xcoord = f['data/x_coordinates'][()]
+            ycoord = f['data/y_coordinates'][()]
+            # ds = f['quality_assurance/statistics/static_layers']
             x_first = min(xcoord)
             y_first = max(ycoord)
-            #x_last = max(xcoord)
-            #y_last = min(ycoord)
-            #width = len(xcoord)
-            #length = len(ycoord)
-            pixel_width = float(f['data']['x_spacing'][()])
-            pixel_height = float(f['data']['y_spacing'][()])
+
+            pixel_width = float(f['data/x_spacing'][()])
+            pixel_height = float(f['data/y_spacing'][()])
             gt = (x_first, pixel_width, 0, y_first, 0, pixel_height)
             print(gt)
 
         if geo_box is None:
-            geo_box = (lonmin, latmin, lonmax, latmax)
+            geo_box = bounds_lalo
 
         bb_utm = bbox_to_utm(geo_box, epsg_src=4326, epsg_dst=crs.to_epsg())
 
@@ -1217,11 +1221,16 @@ def read_subset_box(inpsDict):
         metadata = read_attribute(os.path.dirname(inpsDict['miaplpy.load.metaFile']) + '/data', metafile_ext='.rsc')
         # Grab required info to read input geo_box into pix_box
 
-        try:
-            lookupFile = [glob.glob(str(inpsDict['miaplpy.load.lookupYFile'] + '.xml'))[0],
-                          glob.glob(str(inpsDict['miaplpy.load.lookupXFile'] + '.xml'))[0]]
-            lookupFile = [x.split('.xml')[0] for x in lookupFile]
-        except:
+        #try:
+        #    lookupFile = [glob.glob(str(inpsDict['miaplpy.load.lookupYFile']))[0],
+        #                  glob.glob(str(inpsDict['miaplpy.load.lookupXFile']))[0]]
+        #    lookupFile = [x.split('.xml')[0] for x in lookupFile]
+        #except:
+        lookupFile = [glob.glob(str(inpsDict['miaplpy.load.lookupYFile'] + '.xml'))[0],
+                      glob.glob(str(inpsDict['miaplpy.load.lookupXFile'] + '.xml'))[0]]
+        lookupFile = [x.split('.xml')[0] for x in lookupFile]
+
+        if len(lookupFile) == 0:
             lookupFile = None
 
         try:
@@ -1230,6 +1239,7 @@ def read_subset_box(inpsDict):
                        if i in inpsDict.keys()][0]
 
             file = glob.glob(str(inpsDict[pathKey] + '.xml'))[0]
+            #atr = read_attribute(file)
             atr = read_attribute(file.split('.xml')[0], metafile_ext='.rsc')
         except:
             atr = dict()
@@ -1419,14 +1429,13 @@ def prepare_metadata(inpsDict):
     script_name = 'prep_slc_{}.py'.format(processor)
     print('-' * 50)
     print('prepare metadata files for {} products'.format(processor))
-
     if processor in ['gamma', 'roipac', 'snap']:
         for key in [i for i in inpsDict.keys() if (i.startswith('miaplpy.load.') and i.endswith('File'))]:
             if len(glob.glob(str(inpsDict[key]))) > 0:
                 cmd = '{} {}'.format(script_name, inpsDict[key])
                 print(cmd)
                 os.system(cmd)
-
+    
     elif processor == 'isce':
 
         slc_dir = os.path.dirname(os.path.dirname(inpsDict['miaplpy.load.slcFile']))

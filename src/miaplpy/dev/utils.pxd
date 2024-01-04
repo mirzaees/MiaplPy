@@ -4,6 +4,8 @@ cimport cython
 ctypedef float float
 
 cdef bint isnanc(float complex)
+cdef cnp.ndarray[int, ndim=1] get_big_box_cy(cnp.ndarray[int, ndim=1], int, int, int, int)
+cdef cnp.ndarray[float complex, ndim=3] read_padded(object, cnp.ndarray[int, ndim=1], int, int, int)
 cdef float cargf_r(float complex)
 cdef double cargd_r(float complex)
 cdef float[::1] absmat1(float complex[::1])
@@ -32,8 +34,7 @@ cdef float complex[:,::1] est_cov_cy(float complex[:,::1])
 cpdef float complex[:,::1] est_cov_py(float complex[:,::1])
 cpdef float complex[:,::1] est_corr_py(float complex[:,::1])
 cdef float sum1d(float[::1])
-cdef (float, int) test_PS_cy(float[::1])
-
+cdef tuple test_PS_cy(float complex[:, ::1], float[::1])
 cdef float norm_complex(float complex[::1])
 cdef float complex[::1] squeeze_images(float complex[::1], float complex[:, ::1], cnp.intp_t, int)
 cdef tuple phase_linking_process_cy(float complex[:, ::1], int, bytes, bint, int, int)
@@ -48,7 +49,7 @@ cdef float ecdf_distance(cnp.ndarray[float, ndim=1], cnp.ndarray[float, ndim=1])
 cdef float ks_lut_cy(int, int, float)
 cdef cnp.ndarray[float, ndim=1] concat_cy(cnp.ndarray[float, ndim=1], cnp.ndarray[float, ndim=1])
 cdef int count(cnp.ndarray[long, ndim=2], long)
-cdef float complex[::1] get_shp_row_col_c((int, int), float complex[:, :, ::1], cnp.ndarray[int, ndim=1], cnp.ndarray[int, ndim=1],
+cdef int[:, ::1] get_shp_row_col_c((int, int), float complex[:, :, ::1], cnp.ndarray[int, ndim=1], cnp.ndarray[int, ndim=1],
                                    int, int, int, int, float, bytes)
 cdef float[::1] mean_along_axis_x(float[:, ::1])
 cdef float gam_pta_c(float[:, ::1], float complex[::1])
@@ -77,4 +78,3 @@ cdef float read_cutoff_csv_glrt(int, float)
 cdef float compute_glrt_test_stat(float, float)
 cdef float glrt_alpha(cnp.ndarray[float, ndim=1], cnp.ndarray[float, ndim=1])
 cdef int glrt_cy(cnp.ndarray[float, ndim=1], cnp.ndarray[float, ndim=1], float)
-#cdef tuple test_PS_cy(float complex[:, ::1], float[::1])

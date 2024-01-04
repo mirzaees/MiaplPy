@@ -38,7 +38,7 @@ def main(iargs=None):
         latitude = f['latitude'][:, :]
         longitude = f['longitude'][:, :]
 
-        atr = readfile.read(inps.geometry_file, datasetName='azimuthAngle')[1]
+        atr = readfile.read(inps.geometry_file, datasetName='longitude')[1]
 
         if not key in keys or atr[key] == 'no':
             status = 'run'
@@ -57,7 +57,8 @@ def main(iargs=None):
 
     if status == 'run':
 
-        az_angle = np.deg2rad(float(atr['HEADING']))
+        #az_angle = np.deg2rad(float(atr['HEADING']))
+        az_angle = np.deg2rad(readfile.read(inps.geometry_file, datasetName='azimuthAngle')[0])
         inc_angle = np.deg2rad(readfile.read(inps.geometry_file, datasetName='incidenceAngle')[0])
 
         dem_error = readfile.read(inps.dem_error_file, datasetName='dem')[0]
@@ -81,11 +82,13 @@ def main(iargs=None):
         dy = np.divide((dem_error) * (1 / np.tan(inc_angle)) * np.sin(az_angle), one_degree_latitude)  # converted to degree
 
         if inps.reverse:
-            sign = np.sign(latitude)
-            latitude -= sign * dy
+            # sign = np.sign(latitude)
+            # latitude += sign * dy
+            latitude += dy
 
-            sign = np.sign(longitude)
-            longitude -= sign * dx
+            # sign = np.sign(longitude)
+            # longitude -= sign * dx
+            longitude -= dx
 
             atr[key] = 'no'
             block = [0, latitude.shape[0], 0, latitude.shape[1]]
@@ -104,10 +107,12 @@ def main(iargs=None):
 
         else:
             sign = np.sign(latitude)
-            latitude += sign * dy
+            latitude -= sign * dy
+            # latitude -= dy
 
             sign = np.sign(longitude)
             longitude += sign * dx
+            # longitude += dx
 
             atr[key] = 'yes'
             block = [0, latitude.shape[0], 0, latitude.shape[1]]

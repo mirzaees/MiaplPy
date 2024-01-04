@@ -30,8 +30,11 @@ CPX_ZERO = np.complex64(0.0)
 
 dataType = np.float32
 
-dsdict_isce3 = {'height':'z', 'xCoord':'x', 'yCoord':'y',
-          'incidenceAngle':'local_incidence_angle',
+#dsdict_isce3 = {'height':'height', 'xCoord':'x', 'yCoord':'y',
+#          'incidenceAngle':'local_incidence_angle',
+#          'azimuthAngle':'los_east', 'shadowMask':'layover_shadow_mask'}
+
+dsdict_isce3 = {'incidenceAngle':'local_incidence_angle',
           'azimuthAngle':'los_east', 'shadowMask':'layover_shadow_mask'}
 
 
@@ -45,15 +48,14 @@ class geometryDict(GDict):
 
         # get extra metadata from geometry file if possible
         self.dsNames = list(self.datasetDict.keys())
-
         if not self.extraMetadata:
             dsFile = self.datasetDict[self.dsNames[0]]
             if processor == 'isce3':
-                #metadata = read_attribute(os.path.dirname(dsFile) + '/data', metafile_ext='.rsc')
-                metadata = read_attribute(dsFile.split('.')[0] + '.rsc', metafile_ext='.rsc')
+                metadata = read_attribute(os.path.dirname(dsFile) + '/data', metafile_ext='.rsc')
+                #metadata = read_attribute(dsFile.split('.')[0] + '.rsc', metafile_ext='.rsc')
             else:
                 metadata = read_attribute(dsFile.split('.xml')[0], metafile_ext='.rsc')
-            #metadata = read_attribute(dsFile, metafile_ext='.rsc')
+                #metadata = read_attribute(dsFile, metafile_ext='.rsc')
             if all(i in metadata.keys() for i in ['STARTING_RANGE', 'RANGE_PIXEL_SIZE']):
                 self.extraMetadata = metadata
 
@@ -125,22 +127,6 @@ class geometryDict(GDict):
         if 'UNIT' in self.metadata.keys():
             self.metadata.pop('UNIT')
 
-        # if self.processor is None:
-        #    ext = self.file.split('.')[-1]
-        #    if 'PROCESSOR' in self.metadata.keys():
-        #        self.processor = self.metadata['PROCESSOR']
-        #    elif os.path.exists(self.file+'.xml'):
-        #        self.processor = 'isce'
-        #    elif os.path.exists(self.file+'.rsc'):
-        #        self.processor = 'roipac'
-        #    elif os.path.exists(self.file+'.par'):
-        #        self.processor = 'gamma'
-        #    elif ext == 'grd':
-        #        self.processor = 'gmtsar'
-        #    #what for DORIS/SNAP
-        #    else:
-        #        self.processor = 'isce'
-        #self.metadata['PROCESSOR'] = self.processor
         return self.metadata
 
     def write2hdf5(self, outputFile='geometryRadar.h5', access_mode='w', box=None,

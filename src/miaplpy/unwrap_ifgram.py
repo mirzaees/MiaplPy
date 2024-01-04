@@ -212,7 +212,7 @@ class Snaphu:
     def unwrap_tile(self):
 
         cmd = 'snaphu -f {config_file} -d {wrapped_file} {line_length} -o ' \
-              '{unwrapped_file} --tile {ytile} {xtile} 500 500 ' \
+              '{unwrapped_file} --tile {ytile} {xtile} 50 50 ' \
               '--nproc {num_proc}'.format(config_file=self.config_file, wrapped_file=self.inp_wrapped,
                                           line_length=self.width, unwrapped_file=self.out_unwrapped, ytile=self.y_tile,
                                           xtile=self.x_tile, num_proc=self.num_tiles)

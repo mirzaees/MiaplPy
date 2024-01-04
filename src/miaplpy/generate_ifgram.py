@@ -23,6 +23,7 @@ from math import sqrt, exp
 from osgeo import gdal, osr
 import dask.array as da
 from pyproj import CRS
+import mintpy.multilook as multilook
 
 gdal.UseExceptions()
 
@@ -68,10 +69,16 @@ def main(iargs=None):
     ifg_file = inps.out_dir + f"/{inps.reference}_{inps.secondary}.int.tif"
     cor_file = inps.out_dir + f"/{inps.reference}_{inps.secondary}.cor.tif"
 
-    geotransform, projection, nodata = run_inreferogram(inps, ifg_file)
+    if inps.azlooks * inps.rglooks > 1:
+        ifg_file_full = inps.out_dir + f"/{inps.reference}_{inps.secondary}_full.int.tif"
+        run_inreferogram(inps, ifg_file_full)
+        multilook.multilook_gdal(ifg_file_full, inps.azlooks, inps.rglooks, out_file=ifg_file)
+        
+    else:
+        run_inreferogram(inps, ifg_file)
 
     window_size = (6, 12)
-    estimate_correlation(ifg_file, cor_file, window_size, geotransform, projection, nodata)
+    estimate_correlation(ifg_file, cor_file, window_size)
 
     return
 
@@ -127,30 +134,11 @@ def run_inreferogram(inps, ifg_file):
 
     write_projection(ifg_file, geotransform, projection, nodata)
 
-    return geotransform, projection, nodata
+    return 
 
 
 def write_projection(dst_file, geotransform, projection, nodata) -> None:
-    '''
-    if src_file.endswith('.h5'):
-        with h5py.File(src_file, 'r') as ds:
-            attrs = dict(ds.attrs)
-            if 'spatial_ref' in attrs.keys():
-                #projection = attrs['spatial_ref'][3:-1]
-                projection = attrs['spatial_ref'] #CRS.from_wkt(attrs['spatial_ref'])
-                geotransform = [attrs['X_FIRST'], attrs['X_STEP'], 0, attrs['Y_FIRST'], 0, attrs['Y_STEP']]
-                geotransform = [float(x) for x in geotransform]
-                nodata = np.nan
-            else:
-                geotransform = [0, 1, 0, 0, 0, -1]
-                projection = CRS.from_epsg(4326).to_wkt()
-                nodata = np.nan
-    else:
-        ds_src = gdal.Open(src_file, gdal.GA_Update)
-        projection = ds_src.GetProjection()
-        geotransform = ds_src.GetGeoTransform()
-        nodata = ds_src.GetRasterBand(1).GetNoDataValue()
-    '''
+
     if not geotransform == 'None':
         ds_dst = gdal.Open(dst_file, gdal.GA_Update)
         ds_dst.SetGeoTransform(geotransform)
@@ -160,9 +148,14 @@ def write_projection(dst_file, geotransform, projection, nodata) -> None:
     return
 
 
-def estimate_correlation(ifg_file, cor_file, window_size, geotransform, projection, nodata):
-    if os.path.exists(cor_file):
-        return
+def estimate_correlation(ifg_file, cor_file, window_size):
+    #if os.path.exists(cor_file):
+    #   return
+    
+    ds_src = gdal.Open(ifg_file, gdal.GA_Update)
+    projection = ds_src.GetProjection()
+    geotransform = ds_src.GetGeoTransform()
+    nodata = ds_src.GetRasterBand(1).GetNoDataValue()
 
     if geotransform is None:
         driver_name = 'ENVI'

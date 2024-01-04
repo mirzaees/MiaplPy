@@ -20,10 +20,9 @@ import pyproj
 from osgeo import gdal, osr
 from dolphin import io, stitching
 from dolphin.utils import full_suffix, get_dates
-from dolphin.workflows.config import OPERA_DATASET_ROOT
 from mintpy.utils import arg_utils, ptime, readfile, writefile
 from mintpy.utils.utils0 import calc_azimuth_from_east_north_obs
-from dolphin.workflows import group_by_burst
+#from dolphin.workflows import group_by_burst
 ####################################################################################
 EXAMPLE = """example:
 
@@ -93,8 +92,7 @@ def _create_parser():
         type=int,
         default=1,
         help=(
-            "number of looks in range direction, for multilooking applied after fringe"
-            " processing.\nOnly impacts metadata. (default: %(default)s)."
+            "number of looks in range direction, (default: %(default)s)."
         ),
     )
     parser.add_argument(
@@ -104,8 +102,7 @@ def _create_parser():
         type=int,
         default=1,
         help=(
-            "number of looks in azimuth direction, for multilooking applied after"
-            " fringe processing.\nOnly impacts metadata. (default: %(default)s)."
+            "number of looks in azimuth direction, (default: %(default)s)."
         ),
     )
     parser.add_argument(
@@ -116,6 +113,17 @@ def _create_parser():
             " use to create the timeseries.h5 file directly without inversion."
         ),
     )
+    
+    parser.add_argument(
+        "-p",
+        "--package",
+        dest="package",
+        type=str,
+        default='dolphin',
+        help=("PAckage used for phase linking, options [dolphin, miaplpy]"
+        ),
+    )
+
 
     parser = arg_utils.add_subset_argument(parser, geo=True)
 
@@ -170,7 +178,7 @@ def prepare_metadata(meta_file, int_file, nlks_x=1, nlks_y=1):
         if burst_ds not in meta_compass:
             burst_ds = f"{processing_ds}/input_burst_metadata"
     else:
-        root = OPERA_DATASET_ROOT
+        root = ''
         processing_ds = f"{root}/metadata/processing_information"
         burst_ds = f"{processing_ds}/input_burst_metadata"
 
@@ -395,7 +403,7 @@ def prepare_geometry(outfile, geom_dir, metadata, water_mask_file=None):
     file_to_path = {
         "los_east": geom_path / "los_east_rsm.tif",
         "los_north": geom_path / "los_north_rsm.tif",
-        "height": geom_path / "z_rsm.tif",
+        "height": geom_path / "height_rsm.tif",
         "shadowMask": geom_path / "layover_shadow_mask_rsm.tif",
     }
 
@@ -405,7 +413,7 @@ def prepare_geometry(outfile, geom_dir, metadata, water_mask_file=None):
     dsDict = {}
     for dsName, fname in file_to_path.items():
         try:
-            data = readfile.read(str(fname), datasetName=dsName)[0]
+            data = readfile.read(str(fname), datasetName=dsName)[0].astype(float)
             # TODO: add general functionality to handle nodata into Mintpy
             data[data == 0] = np.nan
             dsDict[dsName] = data
@@ -500,14 +508,16 @@ def prepare_stack(
     num_pair = len(unw_files)
     unw_ext = full_suffix(unw_files[0])
 
-    print(unw_files)
     print(f"number of unwrapped interferograms: {num_pair}")
     print(f"number of correlation files: {len(cor_files)}")
-    print(cor_files)
 
     # get list of *.unw.conncomp file
-    cc_files = [x + '.conncomp' for x in unw_files]
-    cc_files = [x for x in cc_files if Path(x).exists()]
+    if metadata['package'] == 'dolphin':
+        cc_files = [x.split('.tif')[0] + '.conncomp' for x in unw_files]
+        cc_files = [x for x in cc_files if Path(x).exists()]
+    else:
+        cc_files = [x + '.conncomp' for x in unw_files]
+        cc_files = [x for x in cc_files if Path(x).exists()]
     print(f"number of connected components files: {len(cc_files)}")
 
     if len(cc_files) != len(unw_files) or len(cor_files) != len(unw_files):
@@ -558,7 +568,10 @@ def prepare_stack(
             zip(unw_files, cor_files, cc_files)
         ):
             # read/write *.unw file
-            f["unwrapPhase"][i] = io.load_gdal(unw_file, band=2)
+            if metadata['package'] == 'dolphin':
+                f["unwrapPhase"][i] = io.load_gdal(unw_file, band=1)
+            else:
+                f["unwrapPhase"][i] = io.load_gdal(unw_file, band=2)
 
             # read/write *.cor file
             f["coherence"][i] = io.load_gdal(cor_file)
@@ -575,18 +588,18 @@ def prepare_stack(
 
 def stitch_geometry(geom_path_list, geom_dir, meta, dem_file, matching_file):
     os.makedirs(geom_dir, exist_ok=True)
-    file_list = []
-    for burst, files in group_by_burst(geom_path_list, minimum_images=1).items():
-        if len(files) > 1:
-            print(f"Found {len(files)} static_layers files for {burst}")
-        file_list.append(files[0])
-    print(f"Stitching {len(file_list)} images.")
+    #file_list = []
+    #for burst, files in group_by_burst(geom_path_list, minimum_images=1).items():
+    #    if len(files) > 1:
+    #        print(f"Found {len(files)} static_layers files for {burst}")
+    #    file_list.append(files[0])
+    #print(f"Stitching {len(file_list)} images.")
 
     strides = {"x": int(meta['RLOOKS']), "y": int(meta['ALOOKS'])}
     stitched_geom_files = []
     # local_incidence_angle needed by anyone?
     datasets = ["los_east", "los_north", "layover_shadow_mask", "local_incidence_angle"]
-
+  
     for ds_name in datasets:
         outfile = geom_dir + f"/{ds_name}_full.tif"
         print(f"Creating {outfile}")
@@ -594,8 +607,8 @@ def stitch_geometry(geom_path_list, geom_dir, meta, dem_file, matching_file):
         # Used to be:
         # /science/SENTINEL1/CSLC/grids/static_layers
         # we might also move this to dolphin if we do use the layers
-        ds_path = f"{OPERA_DATASET_ROOT}/data/{ds_name}"
-        cur_files = [io.format_nc_filename(f, ds_name=ds_path) for f in file_list]
+        ds_path = f"/data/{ds_name}"
+        cur_files = [io.format_nc_filename(f, ds_name=ds_path) for f in geom_path_list]
 
         stitching.merge_images(
             cur_files,
@@ -612,7 +625,7 @@ def stitch_geometry(geom_path_list, geom_dir, meta, dem_file, matching_file):
 
     #matching_file = '/net/kraken/nobak/smirzaee/Folsom/sequential/crop/scratch/unwrapped/20170114_20170120.unw.tif'
 
-    height_file = geom_dir + "/height_fullm.tif"
+    height_file = geom_dir + "/height_rsm.tif"
     print(f"Creating {height_file}")
     stitched_geom_files.append(height_file)
     stitching.warp_to_match(
@@ -624,7 +637,7 @@ def stitch_geometry(geom_path_list, geom_dir, meta, dem_file, matching_file):
 
     for ds_name in datasets:
         inpfile = geom_dir + f"/{ds_name}_full.tif"
-        outfile = geom_dir + f"/{ds_name}_fullm.tif"
+        outfile = geom_dir + f"/{ds_name}_rsm.tif"
         print(f"Creating {outfile}")
 
         stitching.warp_to_match(
@@ -636,6 +649,31 @@ def stitch_geometry(geom_path_list, geom_dir, meta, dem_file, matching_file):
 
     return
 
+def get_data_bounds(file_path):
+    dataset = gdal.Open(file_path, gdal.GA_ReadOnly)
+    # Get the geospatial information
+    geotransform = dataset.GetGeoTransform()
+
+    # Define the source and target coordinate reference systems
+    source_srs = osr.SpatialReference()
+    source_srs.ImportFromWkt(dataset.GetProjection())
+
+    # Create a target coordinate reference system for WGS 84 (lat/lon)
+    target_srs = osr.SpatialReference()
+    target_srs.ImportFromEPSG(4326)  # EPSG 4326 is WGS 84
+
+    # Create a transformation from the source CRS to the target CRS
+    transform = osr.CoordinateTransformation(source_srs, target_srs)
+
+    # Calculate the corner coordinates in latitude and longitude
+    # Bottom-left corner
+    max_y, min_x, _ = transform.TransformPoint(geotransform[0], geotransform[3], 0)
+
+    # Top-right corner
+    min_y, max_x, _ = transform.TransformPoint(geotransform[0] + dataset.RasterXSize * geotransform[1], geotransform[3] + dataset.RasterYSize * geotransform[5], 0)
+    bbox = (min_x, min_y, max_x, max_y)
+    
+    return bbox
 
 def main(iargs=None):
     """Run the preparation functions."""
@@ -663,9 +701,13 @@ def main(iargs=None):
     meta = prepare_metadata(
         meta_file, unw_files[0], nlks_x=inps.lks_x, nlks_y=inps.lks_y
     )
+
     if not inps.subset_lon is None:
         meta['bbox'] = (inps.subset_lon[0], inps.subset_lat[0], inps.subset_lon[1], inps.subset_lat[1])
+    else:
+        meta[ 'bbox'] = get_data_bounds(unw_files[0])
 
+    meta['package'] = inps.package
     # output directory
     for dname in [inps.out_dir, os.path.join(inps.out_dir, "inputs")]:
         os.makedirs(dname, exist_ok=True)
@@ -673,10 +715,11 @@ def main(iargs=None):
     stack_file = os.path.join(inps.out_dir, "inputs/ifgramStack.h5")
     ts_file = os.path.join(inps.out_dir, "timeseries.h5")
     geom_file = os.path.join(inps.out_dir, "inputs/geometryGeo.h5")
-
-    #geom_path_list = glob.glob(inps.meta_file + '/*/*/static*.h5')
-    #stitch_geometry(geom_path_list=geom_path_list, geom_dir=os.path.abspath(inps.geom_dir),
-    #                meta=meta, dem_file=dem_file, matching_file=unw_files[0])
+    
+    if inps.package == 'dolphin':
+        geom_path_list = glob.glob(inps.meta_file + '/*/*/static*.h5')
+        stitch_geometry(geom_path_list=geom_path_list, geom_dir=os.path.abspath(inps.geom_dir),
+                        meta=meta, dem_file=dem_file, matching_file=unw_files[0])
 
     prepare_geometry(geom_file, geom_dir=inps.geom_dir, metadata=meta)
 

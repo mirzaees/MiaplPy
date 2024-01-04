@@ -241,6 +241,7 @@ class slcStack:
         self.file = file
         self.name = 'slc'
         self.file_structure = FILE_STRUCTURE_SLCs
+        self.chunk=True
 
     def close(self, print_msg=True):
         try:
@@ -376,17 +377,20 @@ class slcStack:
         print('-'*50)
         print('create HDF5 file {} with w mode'.format(self.file))
         f = h5py.File(self.file, "w")
-
+        import pdb; pdb.set_trace()
         for key in dsNameDict.keys():
             print("create dataset: {d:<25} of {t:<25} in size of {s}".format(
                 d=key,
                 t=str(dsNameDict[key][0]),
                 s=dsNameDict[key][1]))
+            
+            if len(dsNameDict[key][1])==3:
+                self.chunk = (dsNameDict[key][1][0], 128, 128)
 
             f.create_dataset(key,
                              shape=dsNameDict[key][1],
                              dtype=dsNameDict[key][0],
-                             chunks=True,
+                             chunks=self.chunk,
                              compression=compression)
 
         # write attributes

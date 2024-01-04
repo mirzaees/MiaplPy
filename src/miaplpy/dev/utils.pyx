@@ -393,63 +393,46 @@ cdef inline float sum1d(float[::1] x):
         out += x[i]
     return out
 
-cdef (float, int) test_PS_cy(float[::1] amplitude):
+cdef tuple test_PS_cy(float complex[:, ::1] coh_mat, float[::1] amplitude):
     """ checks if the pixel is PS """
-    
-    cdef float temp_quality, amp_dispersion #, top_percentage, s
 
+    cdef cnp.intp_t i, t, ns = coh_mat.shape[0]
+    cdef float[::1] Eigen_value
+    #cdef float[::1] amplitude_diff = np.empty(ns, dtype=np.float32)
+    cdef cnp.ndarray[float complex, ndim=2] Eigen_vector
+    cdef float complex[::1] vec = np.zeros(ns, dtype=np.complex64)
+    cdef float s, temp_quality, amp_dispersion, amp_diff_dispersion, top_percentage
+    cdef float complex x0
+    
+    #amplitude_diff = np.zeros(n, dtype=np.float32)
+    Eigen_value, Eigen_vector = lap.cheevd(coh_mat)[0:2]
+
+    s = 0
+    for i in range(ns):
+        s += abs(Eigen_value[i])**2
+        # amplitude_diff[i] = amplitude[i]-amplitude[0]
+
+    s = sqrt(s)
+    top_percentage = Eigen_value[ns-1]*(100 / s)
+    # amp_diff_dispersion = np.std(amplitude_diff)/np.mean(amplitude)
     amp_dispersion = np.std(amplitude)/np.mean(amplitude)
     if amp_dispersion > 1:
         amp_dispersion = 1
 
-    if amp_dispersion < 0.25:
+    if top_percentage > 95 and amp_dispersion < 0.42:
+
         temp_quality = 1
     else:
-        temp_quality = 0.01
-    return temp_quality, 0
+        x0 = cexpf(1j * cargf_r(Eigen_vector[0, ns - 1]))
 
+        for i in range(ns):
+            vec[i] = Eigen_vector[i, ns-1] * conjf(x0)
 
+        temp_quality = gam_pta_c(angmat2(coh_mat), vec)
+        if temp_quality == 1:
+            temp_quality = 0.95
 
-# cdef tuple test_PS_cy(float complex[:, ::1] coh_mat, float[::1] amplitude):
-#     """ checks if the pixel is PS """
-
-#     cdef cnp.intp_t i, t, ns = coh_mat.shape[0]
-#     cdef float[::1] Eigen_value
-#     #cdef float[::1] amplitude_diff = np.empty(ns, dtype=np.float32)
-#     cdef cnp.ndarray[float complex, ndim=2] Eigen_vector
-#     cdef float complex[::1] vec = np.zeros(ns, dtype=np.complex64)
-#     cdef float s, temp_quality, amp_dispersion, amp_diff_dispersion, top_percentage
-#     cdef float complex x0
-    
-#     #amplitude_diff = np.zeros(n, dtype=np.float32)
-#     Eigen_value, Eigen_vector = lap.cheevd(coh_mat)[0:2]
-
-#     s = 0
-#     for i in range(ns):
-#         s += abs(Eigen_value[i])**2
-#         # amplitude_diff[i] = amplitude[i]-amplitude[0]
-
-#     s = sqrt(s)
-#     top_percentage = Eigen_value[ns-1]*(100 / s)
-#     # amp_diff_dispersion = np.std(amplitude_diff)/np.mean(amplitude)
-#     amp_dispersion = np.std(amplitude)/np.mean(amplitude)
-#     if amp_dispersion > 1:
-#         amp_dispersion = 1
-
-#     if top_percentage > 95 and amp_dispersion < 0.42:
-
-#         temp_quality = 1
-#     else:
-#         x0 = cexpf(1j * cargf_r(Eigen_vector[0, ns - 1]))
-
-#         for i in range(ns):
-#             vec[i] = Eigen_vector[i, ns-1] * conjf(x0)
-
-#         temp_quality = gam_pta_c(angmat2(coh_mat), vec)
-#         if temp_quality == 1:
-#             temp_quality = 0.95
-
-#     return temp_quality, vec, amp_dispersion, Eigen_value[ns-1], Eigen_value[ns-2], top_percentage
+    return temp_quality, vec, amp_dispersion, Eigen_value[ns-1], Eigen_value[ns-2], top_percentage
 
 cdef inline float norm_complex(float complex[::1] x):
     cdef cnp.intp_t n = x.shape[0]
@@ -1134,52 +1117,55 @@ cdef int count(cnp.ndarray[long, ndim=2]  x, long value):
     return out
 
 
-cdef float complex[::1] get_shp_row_col_c((int, int) data, float complex[:, :, ::1] input_slc,
+cdef int[:, ::1] get_shp_row_col_c((int, int) data, float complex[:, :, ::1] input_slc,
                         cnp.ndarray[int, ndim=1] def_sample_rows, cnp.ndarray[int, ndim=1] def_sample_cols,
                         int azimuth_window, int range_window, int reference_row,
                         int reference_col, float distance_threshold, bytes shp_test):
 
     cdef int row_0, col_0, i, temp, ref_row, ref_col, t1, t2, s_rows, s_cols
     cdef long ref_label
-    cdef int width, length, n_image = np.shape(input_slc)[0]
+    cdef cnp.intp_t width, length, n_image = input_slc.shape[0]
     cdef int[::1] sample_rows, sample_cols
     cdef cnp.ndarray[long, ndim=2] ks_label, distance
-    cdef float complex[::1] shps
+    cdef int[:, ::1] shps
     cdef cnp.ndarray[float, ndim=1] ref = np.zeros(n_image, dtype=np.float32)
     cdef cnp.ndarray[float, ndim=1] test = np.zeros(n_image, dtype=np.float32)
 
     row_0 = data[0]
     col_0 = data[1]
-    
-    length = np.shape(input_slc)[1]
-    width = np.shape(input_slc)[2]
-    t1 = data[0] + def_sample_rows[0]
-    t2 = data[0] + def_sample_rows[azimuth_window-1]
-    if t2 > length:
-        t2 = length
-    if t1 < 0:
-        t1 = 0
-
+    length = input_slc.shape[1]
+    width = input_slc.shape[2]
+    t1 = 0
+    t2 = def_sample_rows.shape[0]
+    for i in range(def_sample_rows.shape[0]):
+        temp = row_0 + def_sample_rows[i]
+        if temp < 0:
+            t1 += 1
+        if temp >= length:
+            t2 = i
+            break
     s_rows = t2 - t1
-    ref_row = reference_row - (t1 - (data[0] + def_sample_rows[0]))
+    ref_row = reference_row - t1
 
     sample_rows = np.zeros(s_rows, dtype=np.int32)
     for i in range(s_rows):
-        sample_rows[i] = i + t1
+        sample_rows[i] = row_0 + def_sample_rows[i + t1]
 
-    t1 = data[1] + def_sample_cols[0]
-    t2 = data[1] + def_sample_cols[range_window-1]
-    if t2 > width:
-        t2 = width
-    if t1 < 0:
-        t1 = 0
-
+    t1 = 0
+    t2 = def_sample_cols.shape[0]
+    for i in range(def_sample_cols.shape[0]):
+        temp = col_0 + def_sample_cols[i]
+        if temp < 0:
+            t1 += 1
+        if temp >= width:
+            t2 = i
+            break
     s_cols = t2 - t1
-    ref_col = reference_col - (t1 - (data[1] + def_sample_cols[0]))
+    ref_col = reference_col - t1
 
-    sample_cols = np.zeros(s_cols, dtype=np.int32)
+    sample_cols = np.zeros((s_cols), dtype=np.int32)
     for i in range(s_cols):
-        sample_cols[i] = i + t1
+        sample_cols[i] = col_0 + def_sample_cols[i + t1]
 
     for i in range(n_image):
         ref[i] = cabsf(input_slc[i, row_0, col_0])
@@ -1227,16 +1213,17 @@ cdef float complex[::1] get_shp_row_col_c((int, int) data, float complex[:, :, :
     ref_label = ks_label[ref_row, ref_col]
 
     temp = count(ks_label, ref_label)
-    shps = np.zeros(temp, dtype=np.complex64)
+    shps = np.zeros((temp, 2), dtype=np.int32)
 
     temp = 0
     for t1 in range(s_rows):
         for t2 in range(s_cols):
             if ks_label[t1, t2] == ref_label:
-                shps[temp] = sample_rows[t1] + 1j * sample_cols[t2]
+
+                shps[temp, 0] = sample_rows[t1]
+                shps[temp, 1] = sample_cols[t2]
                 temp += 1
     return shps
-
 
 cdef inline float[::1] mean_along_axis_x(float[:, ::1] x):
     cdef int i, t, n = x.shape[0]
@@ -1288,6 +1275,39 @@ cdef float complex[:, ::1] normalize_samples(float complex[:, ::1] X):
             y[i, t] = X[i, t]/norma[t]
     return y
 
+cdef cnp.ndarray[float complex, ndim=3] read_padded(object slcStackObj, cnp.ndarray[int, ndim=1] bigbox, int length, int width, int n_image):
+    cdef int i, box_width = bigbox[2] - bigbox[0]
+    cdef int box_length = bigbox[3] - bigbox[1]
+    cdef cnp.ndarray[int, ndim=1] box = np.zeros(4, dtype=np.int32)
+    cdef cnp.ndarray[float complex, ndim=3] patch_slc_images, patch_slc_images_padded = np.zeros((n_image, box_length, box_width), dtype=np.complex64)
+    cdef cnp.ndarray[int, ndim=2] padding = np.zeros((3,2), dtype=np.int32)
+
+    box[:] = bigbox[:]
+    if bigbox[0] < 0:
+        box[0] = 0
+        padding[2, 0] = abs(bigbox[0])
+    if bigbox[1] < 0:
+        box[1] = 0
+        padding[1,0] = abs(bigbox[1])
+    if bigbox[2] > width:
+        box[2] = width
+        padding[2, 1] = bigbox[2]-width
+    if bigbox[3] > length:
+        box[3] = length
+        padding[1, 1] = bigbox[3]-length
+
+    patch_slc_images = slcStackObj.read(datasetName='slc', box=box, print_msg=False)
+
+    patch_slc_images_padded[:, :, :] = np.pad(patch_slc_images, padding, mode='constant')[:, :, :]
+    return patch_slc_images_padded
+
+cdef cnp.ndarray[int, ndim=1] get_big_box_cy(cnp.ndarray[int, ndim=1] box, int range_window, int azimuth_window, int width, int length):
+    cdef cnp.ndarray[int, ndim=1] big_box = np.arange(4, dtype=np.int32)
+    big_box[0] = box[0] - range_window
+    big_box[1] = box[1] - azimuth_window
+    big_box[2] = box[2] + range_window
+    big_box[3] = box[3] + azimuth_window
+    return big_box
 
 def process_patch_c(cnp.ndarray[int, ndim=1] box, int range_window, int azimuth_window, int width, int length, int n_image,
                     object slcStackObj, float distance_threshold, cnp.ndarray[int, ndim=1] def_sample_rows,
@@ -1295,28 +1315,34 @@ def process_patch_c(cnp.ndarray[int, ndim=1] box, int range_window, int azimuth_
                     bytes phase_linking_method, int total_num_mini_stacks, int default_mini_stack_size,
                     int ps_shp, bytes shp_test, bytes out_dir, int lag, bytes mask_file, int num_archived):
 
-    cdef cnp.ndarray[float complex, ndim=3] patch_slc_images = slcStackObj.read(datasetName='slc', box=box, print_msg=False)
-    cdef int first_line, last_line, num_lines, row, col
+    cdef cnp.ndarray[int, ndim=1] big_box = get_big_box_cy(box, range_window, azimuth_window, width, length)
     cdef int box_width = box[2] - box[0]
     cdef int box_length = box[3] - box[1]
     cdef cnp.ndarray[int, ndim=2] reference_index = np.zeros((box_length, box_width), dtype=np.int32)
     cdef cnp.ndarray[float complex, ndim=3] rslc_ref = np.zeros((n_image, box_length, box_width), dtype=np.complex64)
-    cdef cnp.ndarray[float, ndim=2] tempCoh = np.zeros((box_length, box_width), dtype=np.float32)
+    cdef cnp.ndarray[float, ndim=3] tempCoh = np.zeros((2, box_length, box_width), dtype=np.float32)
+    cdef cnp.ndarray[float, ndim=3] PSprod = np.zeros((4, box_length, box_width), dtype=np.float32)
     cdef cnp.ndarray[int, ndim=2] mask_ps = np.zeros((box_length, box_width), dtype=np.int32)
     cdef cnp.ndarray[int, ndim=2] SHP = np.zeros((box_length, box_width), dtype=np.int32)
-    cdef int row1 = 0 
-    cdef int row2 = box_length 
-    cdef int col1 = 0 
-    cdef int[:, ::1] coords = np.zeros((box_length*box_width, 2), dtype=np.int32)
+    cdef int row1 = box[1] - big_box[1]
+    cdef int row2 = box[3] - big_box[1]
+    cdef int col1 = box[0] - big_box[0]
+    cdef int col2 = box[2] - big_box[0]
+    cdef int[::1] lin = np.arange(row1, row2, dtype=np.int32)
+    cdef int overlap_length = row2 - row1
+    cdef int[::1] sam = np.arange(col1, col2, dtype=np.int32)
+    cdef int overlap_width = col2 - col1
+    cdef int[:, ::1] coords = np.zeros((overlap_length*overlap_width, 2), dtype=np.int32)
     cdef int noval, num_points, num_shp, si, i, t, m = 0
     cdef (int, int) data
-    cdef float complex[::1] shp
+    cdef int[:, ::1] shp
+    cdef cnp.ndarray[float complex, ndim=3] patch_slc_images = read_padded(slcStackObj, big_box, length, width, n_image)
     cdef cnp.ndarray[float complex, ndim=3] sub_patch_slc_images 
     cdef float complex[:, ::1] CCG, coh_mat, squeezed_images
     cdef float complex[::1] vec, vec_refined = np.empty(n_image, dtype=np.complex64)
     cdef float[::1] amp_refined0, amp_refined =  np.zeros(n_image, dtype=np.float32)
     cdef bint noise = False
-    cdef float temp_quality #, temp_quality_full
+    cdef float temp_quality, temp_quality_full, denom
     cdef object prog_bar
     cdef bytes out_folder
     cdef int max_coh_index, index = box[4]
@@ -1326,6 +1352,7 @@ def process_patch_c(cnp.ndarray[int, ndim=1] box, int range_window, int azimuth_
     cdef int[:, ::1] mask = np.ones((box_length, box_width), dtype=np.int32)
     cdef dict ccgdict = {}
     cdef int nline
+    #cdef dict shpdict = {}
 
     max_coh_index = 0
 
@@ -1339,16 +1366,14 @@ def process_patch_c(cnp.ndarray[int, ndim=1] box, int range_window, int azimuth_
     if os.path.exists(out_folder.decode('UTF-8') + '/flag.npy'):
         return
 
-    for i in range(box_length):
-        for t in range(box_width):
-            if mask[i, t] and not np.isnan(patch_slc_images[:, i, t]).any():
-                coords[m, 0] = i
-                coords[m, 1] = t 
+    for i in range(overlap_length):
+        for t in range(overlap_width):
+            coords[m, 0] = i + row1
+            coords[m, 1] = t + col1
             m += 1
         
 
     num_points = m
-
     prog_bar = ptime.progressBar(maxValue=num_points)
     
     for i in range(num_points): 
@@ -1356,128 +1381,123 @@ def process_patch_c(cnp.ndarray[int, ndim=1] box, int range_window, int azimuth_
         data = (coords[i,0], coords[i,1])
         num_shp = 0
 
-        # if mask[data[0], data[1]] and not np.isnan(patch_slc_images[:, data[0], data[1]]).any():
+        if mask[data[0] - row1, data[1] - col1] and not np.isnan(patch_slc_images[:, data[0], data[1]]).any():
             
-        if len(phase_linking_method) > 10 and phase_linking_method[0:10] == b'sequential':
-            for si in range(total_num_mini_stacks):
-                nline = default_mini_stack_size
-                if si == total_num_mini_stacks - 1:
-                    nline = n_image - si*default_mini_stack_size
-                sub_patch_slc_images = patch_slc_images[si*default_mini_stack_size:si*default_mini_stack_size + nline, :,:]
-                shp = get_shp_row_col_c(data, sub_patch_slc_images, def_sample_rows, def_sample_cols, azimuth_window, 
-                range_window, reference_row, reference_col, distance_threshold, shp_test)
+            if len(phase_linking_method) > 10 and phase_linking_method[0:10] == b'sequential':
+                for si in range(total_num_mini_stacks):
+                    nline = default_mini_stack_size
+                    if si == total_num_mini_stacks - 1:
+                        nline = n_image - si*default_mini_stack_size
+                    sub_patch_slc_images = patch_slc_images[si*default_mini_stack_size:si*default_mini_stack_size + nline, :,:]
+                    shp = get_shp_row_col_c(data, sub_patch_slc_images, def_sample_rows, def_sample_cols, azimuth_window, 
+                    range_window, reference_row, reference_col, distance_threshold, shp_test)
 
-                num_shp = shp.shape[0] if shp.shape[0] > num_shp else num_shp
+                    num_shp = shp.shape[0] if shp.shape[0] > num_shp else num_shp
+                  
+                    CCG = np.zeros((np.shape(sub_patch_slc_images)[0], shp.shape[0]), dtype=np.complex64)
+                    for t in range(shp.shape[0]):
+                        for m in range(np.shape(sub_patch_slc_images)[0]):
+                            CCG[m, t] = patch_slc_images[m, shp[t,0], shp[t,1]]
+                    ccgdict[str(si)] = CCG
+                    amp_refined0 = mean_along_axis_x(absmat2(CCG))
+                    
+                    for t in range(amp_refined0.shape[0]):
+                        amp_refined[si*total_num_mini_stacks + t] = amp_refined0[t]
+                    if si == 0:
+                        coh_mat = est_corr_cy(CCG)
+                SHP[data[0] - row1, data[1] - col1] = num_shp
                 
-                CCG = np.zeros((np.shape(sub_patch_slc_images)[0], shp.shape[0]), dtype=np.complex64)
+            else:
+
+
+                shp = get_shp_row_col_c(data, patch_slc_images, def_sample_rows, def_sample_cols, azimuth_window,
+                                        range_window, reference_row, reference_col, distance_threshold, shp_test)
+
+                num_shp = shp.shape[0]
+                SHP[data[0] - row1, data[1] - col1] = num_shp
+                CCG = np.zeros((n_image, num_shp), dtype=np.complex64)
+
                 for t in range(num_shp):
-                    for m in range(np.shape(sub_patch_slc_images)[0]):
-                        row = int(crealf(shp[t]))
-                        col = int(cimagf(shp[t]))
-                        CCG[m, t] = patch_slc_images[m, row, col]
-                ccgdict[str(si)] = CCG
-                amp_refined0 = mean_along_axis_x(absmat2(CCG))
-                
-                for t in range(amp_refined0.shape[0]):
-                    amp_refined[si*total_num_mini_stacks + t] = amp_refined0[t]
-                if si == 0:
-                    coh_mat = est_corr_cy(CCG)
-            SHP[data[0], data[1]] = num_shp
-            
-        else:
+                    for m in range(n_image):
+                        CCG[m, t] = patch_slc_images[m, shp[t,0], shp[t,1]]
 
+                coh_mat = est_corr_cy(CCG)
 
-            shp = get_shp_row_col_c(data, patch_slc_images, def_sample_rows, def_sample_cols, azimuth_window,
-                                    range_window, reference_row, reference_col, distance_threshold, shp_test)
+            if num_shp <= ps_shp:
+                max_coh_index = 0
+                x0 = conjf(patch_slc_images[0, data[0], data[1]])
 
-            num_shp = shp.shape[0]
-            SHP[data[0], data[1]] = num_shp
-            CCG = np.zeros((n_image, num_shp), dtype=np.complex64)
-
-            for t in range(num_shp):
                 for m in range(n_image):
-                    row = int(crealf(shp[t]))
-                    col = int(cimagf(shp[t]))
-                    CCG[m, t] = patch_slc_images[m, row, col]
+                    vec_refined[m] = patch_slc_images[m, data[0], data[1]]  * x0
+                    amp_refined[m] = cabsf(patch_slc_images[m, data[0], data[1]])
 
-            coh_mat = est_corr_cy(CCG)
+                temp_quality, vec, amp_disp, eigv1, eigv2, top_percent = test_PS_cy(coh_mat, amp_refined)
+                PSprod[0, data[0] - row1, data[1] - col1] = amp_disp
+                PSprod[1, data[0] - row1, data[1] - col1] = eigv1
+                PSprod[2, data[0] - row1, data[1] - col1] = eigv2
+                PSprod[3, data[0] - row1, data[1] - col1] = top_percent
 
-        if num_shp <= ps_shp:
-            max_coh_index = 0
-            x0 = conjf(patch_slc_images[0, data[0], data[1]])
-
-            for m in range(n_image):
-                vec_refined[m] = patch_slc_images[m, data[0], data[1]]  * x0
-                amp_refined[m] = cabsf(patch_slc_images[m, data[0], data[1]])
-
-            #temp_quality, vec, amp_disp, eigv1, eigv2, top_percent = test_PS_cy(coh_mat, amp_refined)
-            temp_quality, max_coh_index = test_PS_cy(amp_refined)
-            # PSprod[0, data[0], data[1]] = amp_disp
-            # PSprod[1, data[0], data[1]] = eigv1
-            # PSprod[2, data[0], data[1]] = eigv2
-            # PSprod[3, data[0], data[1]] = top_percent
-
-            if temp_quality == 1:
-                mask_ps[data[0], data[1]] = 1
-            else:
-                vec_refined = vec
-            # temp_quality_full = temp_quality
-
-        else:
-
-            if phase_linking_method[0:9] == b'real_time':
-                vec_refined, squeezed_images, temp_quality, max_coh_index = real_time_phase_linking_iterate(CCG,
-                                                                                            default_mini_stack_size,
-                                                                                            phase_linking_method,
-                                                                                            num_archived)
-
-                # temp_quality_full = temp_quality
-                for m in range(n_image):
-                        amp_refined[m] = cabsf(vec_refined[m])
+                if temp_quality == 1:
+                    mask_ps[data[0] - row1, data[1] - col1] = 1
+                else:
+                    vec_refined = vec
+                temp_quality_full = temp_quality
 
             else:
 
-                if len(phase_linking_method) > 10 and phase_linking_method[0:10] == b'sequential':
-                    vec_refined, squeezed_images, temp_quality, max_coh_index = sequential_phase_linking_cy(ccgdict, phase_linking_method,
-                                                                                default_mini_stack_size,
-                                                                                total_num_mini_stacks, n_image, num_shp)
+                if phase_linking_method[0:9] == b'real_time':
+                    vec_refined, squeezed_images, temp_quality, max_coh_index = real_time_phase_linking_iterate(CCG,
+                                                                                             default_mini_stack_size,
+                                                                                             phase_linking_method,
+                                                                                             num_archived)
 
-                    # temp_quality_full = temp_quality
-
-                    # vec_refined = datum_connect_cy(squeezed_images, vec_refined, default_mini_stack_size)
+                    temp_quality_full = temp_quality
+                    for m in range(n_image):
+                            amp_refined[m] = cabsf(vec_refined[m])
 
                 else:
-                    vec_refined, noval, temp_quality, max_coh_index = phase_linking_process_cy(CCG, 0, phase_linking_method, False, lag, default_mini_stack_size)
 
-                    amp_refined = mean_along_axis_x(absmat2(CCG))
-                    # temp_quality_full = gam_pta_c(angmat2(coh_mat), vec_refined)
-        
-        
-        for m in range(n_image):
-            rslc_ref[m, data[0], data[1]] = amp_refined[m] * cexpf(1j * cargf(vec_refined[m]))
+                    if len(phase_linking_method) > 10 and phase_linking_method[0:10] == b'sequential':
+                        vec_refined, squeezed_images, temp_quality, max_coh_index = sequential_phase_linking_cy(ccgdict, phase_linking_method,
+                                                                                   default_mini_stack_size,
+                                                                                   total_num_mini_stacks, n_image, num_shp)
 
-            #if m == 0:
-            #    rslc_ref[0, data[0], data[1]] = amp_refined[0] * cexpf(1j * 0)
-            #else:
-            #    rslc_ref[m, data[0], data[1]] = amp_refined[m] * cexpf(1j * cargf(vec_refined[m]))
+                        temp_quality_full = temp_quality
 
-        if temp_quality < 0:
-            temp_quality = 0
-        # if temp_quality_full < 0:
-        #     temp_quality_full = 0
+                        # vec_refined = datum_connect_cy(squeezed_images, vec_refined, default_mini_stack_size)
 
-        tempCoh[data[0], data[1]] = temp_quality         # Average temporal coherence from mini stacks
-        #tempCoh[1, data[0], data[1]] = temp_quality_full    # Full stack temporal coherence
-        # else:
-        #     x0 = conjf(patch_slc_images[0, data[0], data[1]])
-        #     tempCoh[0, data[0], data[1]] = 0    # Average temporal coherence from mini stacks
-        #     tempCoh[1, data[0], data[1]] = 0    # Full stack temporal coherence
-        #     SHP[data[0], data[1]] = 1
-        #     for m in range(n_image):
-        #             rslc_ref[m, data[0], data[1]] = patch_slc_images[m, data[0], data[1]]  * x0
+                    else:
+                        vec_refined, noval, temp_quality, max_coh_index = phase_linking_process_cy(CCG, 0, phase_linking_method, False, lag, default_mini_stack_size)
+
+                        amp_refined = mean_along_axis_x(absmat2(CCG))
+                        temp_quality_full = gam_pta_c(angmat2(coh_mat), vec_refined)
+            
+            
+            for m in range(n_image):
+                rslc_ref[m, data[0] - row1, data[1] - col1] = amp_refined[m] * cexpf(1j * cargf(vec_refined[m]))
+
+                #if m == 0:
+                #    rslc_ref[0, data[0] - row1, data[1] - col1] = amp_refined[0] * cexpf(1j * 0)
+                #else:
+                #    rslc_ref[m, data[0] - row1, data[1] - col1] = amp_refined[m] * cexpf(1j * cargf(vec_refined[m]))
+
+            if temp_quality < 0:
+                temp_quality = 0
+            if temp_quality_full < 0:
+                temp_quality_full = 0
+
+            tempCoh[0, data[0] - row1, data[1] - col1] = temp_quality         # Average temporal coherence from mini stacks
+            tempCoh[1, data[0] - row1, data[1] - col1] = temp_quality_full    # Full stack temporal coherence
+        else:
+            x0 = conjf(patch_slc_images[0, data[0], data[1]])
+            tempCoh[0, data[0] - row1, data[1] - col1] = 0    # Average temporal coherence from mini stacks
+            tempCoh[1, data[0] - row1, data[1] - col1] = 0    # Full stack temporal coherence
+            SHP[data[0] - row1, data[1] - col1] = 1
+            for m in range(n_image):
+                    rslc_ref[m, data[0] - row1, data[1] - col1] = patch_slc_images[m, data[0], data[1]]  * x0
 
 
-        reference_index[data[0], data[1]] = max_coh_index
+        reference_index[data[0] - row1, data[1] - col1] = max_coh_index
         prog_bar.update(i, every=500, suffix='{}/{} pixels, patch {}'.format(i, num_points, index))
         
 
@@ -1485,7 +1505,7 @@ def process_patch_c(cnp.ndarray[int, ndim=1] box, int range_window, int azimuth_
     np.save(out_folder.decode('UTF-8') + '/shp.npy', SHP)
     np.save(out_folder.decode('UTF-8') + '/tempCoh.npy', tempCoh)
     np.save(out_folder.decode('UTF-8') + '/mask_ps.npy', mask_ps)
-    #np.save(out_folder.decode('UTF-8') + '/ps_products.npy', PSprod)
+    np.save(out_folder.decode('UTF-8') + '/ps_products.npy', PSprod)
     np.save(out_folder.decode('UTF-8') + '/flag.npy', [1])
     np.save(out_folder.decode('UTF-8') + '/reference_index.npy', reference_index)
 

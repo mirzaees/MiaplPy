@@ -192,12 +192,15 @@ def read_inps_dict2geometry_dict_object(inpsDict):
     for dsName in [i for i in GEOMETRY_DSET_NAMES
                    if i in datasetName2templateKey.keys()]:
         key = datasetName2templateKey[dsName]
+        print(key)
         if key in inpsDict.keys():
             if inpsDict['processor'] == 'isce3':
                 files = sorted(glob.glob(str(inpsDict[key]+'/*/static*.h5')))
             else:
-                files = sorted(glob.glob(str(inpsDict[key]) + '.xml'))
-                files = [item.split('.xml')[0] for item in files]
+                files = sorted(glob.glob(str(inpsDict[key])))
+                if len(files) == 0:
+                    files = sorted(glob.glob(str(inpsDict[key]) + '.xml'))
+                    files = [item.split('.xml')[0] for item in files]
             if len(files) > 0:
                 if dsName == 'bperp':
                     bperpDict = {}
@@ -210,11 +213,17 @@ def read_inps_dict2geometry_dict_object(inpsDict):
                                                        path=inpsDict[key]))
                     print('number of bperp files: {}'.format(len(list(bperpDict.keys()))))
                 else:
-                    dsPathDict[dsName] = files[0]
-                    print('{:<{width}}: {path}'.format(dsName,
-                                                       width=maxDigit,
-                                                       path=files[0]))
-
+                    if inpsDict['processor'] == 'isce3' and dsName not in ['height', 'xCoord', 'yCoord']:
+                        dsPathDict[dsName] = files[0]
+                        print('{:<{width}}: {path}'.format(dsName,
+                                                           width=maxDigit,
+                                                           path=files[0]))
+                    else:
+                        dsPathDict[dsName] = files[0]
+                        print('{:<{width}}: {path}'.format(dsName,
+                                                           width=maxDigit,
+                                                           path=files[0]))
+    
 
     # Check required dataset
     dsName0 = GEOMETRY_DSET_NAMES[0]
@@ -230,11 +239,12 @@ def read_inps_dict2geometry_dict_object(inpsDict):
             atr = readfile.read_attribute(slcFiles[0])
             if 'Y_FIRST' not in atr.keys():
                 slcRadarMetadata = atr.copy()
-
+    
     # dsPathDict --> dsGeoPathDict + dsRadarPathDict
     dsNameList = list(dsPathDict.keys())
     dsGeoPathDict = {}
     dsRadarPathDict = {}
+   
     for dsName in dsNameList:
         if dsName == 'bperp':
             atr = readfile.read_attribute(next(iter(dsPathDict[dsName].values())))
@@ -243,7 +253,10 @@ def read_inps_dict2geometry_dict_object(inpsDict):
                 #atr = mut.read_attribute(dsPathDict[dsName].split('.geo')[0], metafile_ext='.hdr')
                 atr = inpsDict
             else:
-                atr = mut.read_attribute(dsPathDict[dsName].split('.xml')[0], metafile_ext='.xml')
+                try:
+                    atr = mut.read_attribute(dsPathDict[dsName].split('.xml')[0], metafile_ext='.vrt')
+                except:
+                    atr = mut.read_attribute(dsPathDict[dsName].split('.xml')[0], metafile_ext='.xml')
         if 'Y_FIRST' in atr.keys() or inpsDict['processor'] == 'isce3':
             dsGeoPathDict[dsName] = dsPathDict[dsName]
         else:
@@ -251,6 +264,7 @@ def read_inps_dict2geometry_dict_object(inpsDict):
 
     geomRadarObj = None
     geomGeoObj = None
+
 
     if len(dsRadarPathDict) > 0:
         geomRadarObj = geometryDict(processor=inpsDict['processor'],

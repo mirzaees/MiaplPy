@@ -109,7 +109,8 @@ def stitch_bursts(iargs=None):
                 out_bounds_epsg=4326,
                 target_aligned_pixels=True,
                 overwrite=True,
-                strides={"x": 6, "y": 3}
+                strides={"x": 6, "y": 3},
+                in_nodata=np.nan
             )
 
     for dates, cur_images in grouped_cors.items():
@@ -123,7 +124,8 @@ def stitch_bursts(iargs=None):
                 out_bounds_epsg=4326,
                 target_aligned_pixels=True,
                 overwrite=True,
-                strides={"x": 6, "y": 3}
+                strides={"x": 6, "y": 3},
+                in_nodata=np.nan
             )
 
     geom_files = glob.glob(os.path.abspath(inps.geometry_dir))
@@ -170,33 +172,40 @@ def stitch_bursts(iargs=None):
                 overwrite=True,
                 strides={"x": 6, "y": 3}
             )
-
-    tcoh_file = [x + '/tempCoh_average.tif' for x in glob.glob(os.path.dirname(os.path.abspath(inps.ifg_dir)))]
-    outfile = inps.output_dir + "/geometry/tempCoh_average.tif"
-    if not os.path.exists(outfile):
-        stitching.merge_images(
-            tcoh_file,
-            outfile=outfile,
-            driver="ENVI",
-            out_bounds=inps.bbox,
-            out_bounds_epsg=4326,
-            target_aligned_pixels=True,
-            overwrite=True,
-            strides={"x": 6, "y": 3}
-        )
+    
+    datasets = ['tempCoh_average', 'mask_ps']
+    for dset in datasets:
+        tcoh_file = [x + f"/{dset}.tif" for x in glob.glob(os.path.dirname(os.path.abspath(inps.ifg_dir)))]
+        outfile = inps.output_dir + f"/geometry/{dset}.tif"
+   
+        if not os.path.exists(outfile):
+            stitching.merge_images(
+                tcoh_file,
+                outfile=outfile,
+                driver="ENVI",
+                out_bounds=inps.bbox,
+                out_bounds_epsg=4326,
+                target_aligned_pixels=True,
+                overwrite=True,
+                strides={"x": 6, "y": 3},
+                in_nodata=0
+            )
 
     matching_file = out_ifg_dir + f"/{date_lists[0]}.tif"
 
-    inpfile = inps.output_dir + f"/geometry/tempCoh_average.tif"
-    outfile = inps.output_dir + f"/geometry/tempCoh_average_rsm.tif"
-    print(f"Creating {outfile}")
+    for dset in datasets:
 
-    stitching.warp_to_match(
-        input_file=inpfile,
-        match_file=matching_file,
-        output_file=outfile,
-        resample_alg="cubic",
-    )
+        inpfile = inps.output_dir + f"/geometry/{dset}.tif"
+        outfile = inps.output_dir + f"/geometry/{dset}_rsm.tif"
+        print(f"Creating {outfile}")
+
+        stitching.warp_to_match(
+            input_file=inpfile,
+            match_file=matching_file,
+            output_file=outfile,
+            resample_alg="cubic",
+        )
+
     for key in keys:
         inpfile = inps.output_dir + f"/geometry/{key}.geo"
         outfile = inps.output_dir + f"/geometry/{key}_rsm.tif"
@@ -209,6 +218,17 @@ def stitch_bursts(iargs=None):
             resample_alg="cubic",
         )
 
+    inpfile = inps.output_dir + f"/dem.tif"
+    outfile = inps.output_dir + f"/geometry/height_rsm.tif"
+    print(f"Creating {outfile}")
+
+    stitching.warp_to_match(
+        input_file=inpfile,
+        match_file=matching_file,
+        output_file=outfile,
+        resample_alg="cubic",
+    )
+
     run_unwrap(inps.output_dir, out_ifg_dir, geom_files[0])
 
     return
@@ -216,9 +236,7 @@ def stitch_bursts(iargs=None):
 
 def get_projection(file):
     with h5py.File(file, 'r') as ds:
-        dsg = ds['data']['projection'].attrs
-        # xcoord = ds['data']['x_coordinates'][()]
-        # ycoord = ds['data']['y_coordinates'][()]
+        dsg = ds['data']['projection'].attrs      
         x_step = float(ds['data']['x_spacing'][()])
         y_step = float(ds['data']['y_spacing'][()])
         x_first = min(ds['data']['x_coordinates'][()])
@@ -231,10 +249,6 @@ def get_projection(file):
 
 
 def write_projection(geotransform, projection, nodata, dst_file) -> None:
-    # if "layover_shadow_mask" in dst_file:
-    #    nnodata = 0
-    # else:
-    #    nnodata = np.nan
 
     ds_dst = gdal.Open(dst_file, gdal.GA_Update)
     ds_dst.SetGeoTransform(geotransform)
@@ -264,7 +278,7 @@ def run_unwrap(out_dir, ifg_dir, reference_file, write_job=False, job_obj=None):
     print('Generate {}'.format(run_file_unwrap))
 
     run_commands = []
-    num_cpu = os.cpu_count()
+    num_cpu = 4
     ntiles = num_pixels // unwrap_options['tileNumPixels']
     if ntiles == 0:
         ntiles = 1

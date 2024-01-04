@@ -311,6 +311,10 @@ class MiaplPyParser:
                            help='The list containing patches of i*num_worker:(i+1)*num_worker')
         patch.add_argument('-c', '--concatenate', dest='do_concatenate', action='store_false',
                            help='Concatenate all phase inverted patches')
+        parser.add_argument('-al', '--azimuth_looks', type=int, dest='azlooks', default=1,
+                            help='Azimuth looks')
+        parser.add_argument('-rl', '--range_looks', type=int, dest='rglooks', default=1,
+                            help='Range looks')
 
 
         return parser

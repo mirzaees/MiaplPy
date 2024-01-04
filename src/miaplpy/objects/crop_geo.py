@@ -191,8 +191,13 @@ def get_raster_bounds(xcoord, ycoord, utm_bbox=None):
     if not utm_bbox is None:
         x_bounds.append([utm_bbox[0], utm_bbox[2]])
         y_bounds.append([utm_bbox[1], utm_bbox[3]])
+    
+    minx = max(x_bounds, key=lambda x: x[0])[0]
+    miny = max(y_bounds, key=lambda x: x[0])[0]
+    maxx = min(x_bounds, key=lambda x: x[1])[1]
+    maxy = min(y_bounds, key=lambda x: x[1])[1]
 
-    bounds = max(x_bounds)[0], max(y_bounds)[0], min(x_bounds)[1], min(y_bounds)[1]
+    bounds = minx, miny, maxx, maxy
     return bounds
 
 
@@ -234,23 +239,24 @@ class cropSLC:
         self.length, self.width = self.shape
 
         self.lengthc, self.widthc = self.get_size()
+        self.chunk = (self.numSlc, 128, 128)
 
     def get_transform(self, src_file):
         with h5py.File(src_file, 'r') as ds:
-            dsg = ds['data']['projection'].attrs
-            xcoord = ds['data']['x_coordinates'][()]
-            ycoord = ds['data']['y_coordinates'][()]
-            shape = (ds['data']['y_coordinates'].shape[0], ds['data']['x_coordinates'].shape[0])
+            dsg = ds['data/projection'].attrs
+            xcoord = ds['data/x_coordinates'][()]
+            ycoord = ds['data/y_coordinates'][()]
+            shape = (ds['data/y_coordinates'].shape[0], ds['data/x_coordinates'].shape[0])
             crs = CRS.from_wkt(dsg['spatial_ref'].decode("utf-8"))
             # crs = dsg['spatial_ref'].decode("utf-8")
-            x_step = float(ds['data']['x_spacing'][()])
-            y_step = float(ds['data']['y_spacing'][()])
-            x_first = min(ds['data']['x_coordinates'][()])
-            y_first = max(ds['data']['y_coordinates'][()])
+            x_step = float(ds['data/x_spacing'][()])
+            y_step = float(ds['data/y_spacing'][()])
+            x_first = min(ds['data/x_coordinates'][()])
+            y_first = max(ds['data/y_coordinates'][()])
             geotransform = (x_first, x_step, 0, y_first, 0, y_step)
         if self.geo_bbox is None:
-            x_last = max(ds['data']['x_coordinates'][()])
-            y_last = min(ds['data']['y_coordinates'][()])
+            x_last = max(ds['data/x_coordinates'][()])
+            y_last = min(ds['data/y_coordinates'][()])
             self.bb_utm = (x_first, y_first, x_last, y_last)
         else:
             self.bb_utm = bbox_to_utm(self.geo_bbox, epsg_src=4326, epsg_dst=crs.to_epsg())
@@ -372,7 +378,7 @@ class cropSLC:
                                   shape=dsShape,
                                   maxshape=(None, dsShape[1], dsShape[2]),
                                   dtype=dsDataType,
-                                  chunks=True,
+                                  chunks=self.chunk,
                                   compression=dsCompression)
 
             ds.attrs.update(long_name="SLC complex data")

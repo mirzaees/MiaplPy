@@ -368,7 +368,12 @@ def get_raster_bounds(xcoord, ycoord, utm_bbox=None):
         x_bounds.append([utm_bbox[0], utm_bbox[2]])
         y_bounds.append([utm_bbox[1], utm_bbox[3]])
 
-    bounds = max(x_bounds)[0], max(y_bounds)[0], min(x_bounds)[1], min(y_bounds)[1]
+    minx = max(x_bounds, key=lambda x: x[0])[0]
+    miny = max(y_bounds, key=lambda x: x[0])[0]
+    maxx = min(x_bounds, key=lambda x: x[1])[1]
+    maxy = min(y_bounds, key=lambda x: x[1])[1]
+
+    bounds = minx, miny, maxx, maxy
     return bounds
 
 ####################################################################################

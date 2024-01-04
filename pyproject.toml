@@ -39,11 +39,12 @@ miaplpyApp = "miaplpy.miaplpyApp:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
-#include = ["defaults/*.cfg", "defaults/*.full"]
+#include = ["defaults/*.cfg", "defaults/*.full", "lib/*.csv"]
 
 
 [tool.setuptools.package-data]
 "miaplpy.defaults" = ["*.cfg", "*.full"]
+"miaplpy.lib" = ["*.csv"]
 
 
 [tool.setuptools.dynamic]

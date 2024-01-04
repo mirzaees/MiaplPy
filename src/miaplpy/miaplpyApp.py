@@ -150,7 +150,10 @@ class miaplpyTimeSeriesAnalysis(TimeSeriesAnalysis):
 
         self.azimuth_look = 1
         self.range_look = 1
-
+    
+        if self.template['miaplpy.interferograms.strides']:
+            self.range_look, self.azimuth_look = [int(x) for x in self.template['miaplpy.interferograms.strides'].split(',')]
+        
         self.hostname = os.getenv('HOSTNAME')
         if not self.hostname is None and self.hostname.startswith('login'):
             self.hostname = 'login'
@@ -330,9 +333,10 @@ class miaplpyTimeSeriesAnalysis(TimeSeriesAnalysis):
             a2=self.template['miaplpy.inversion.azimuthWindow'], a3=self.template['miaplpy.inversion.patchSize'])
 
         if sname == 'concatenate_patches':
-            command_line = '{a} phase_linking.py {b} --slc_stack {c} --method {d} --concatenate\n'.format(
+            command_line = '{a} phase_linking.py {b} --slc_stack {c} --method {d} --azimuth_looks {f} --range_looks {g} --concatenate\n'.format(
                 a=self.text_cmd.strip("'"), b=scp_args, c=slc_stack,
-                d=self.template['miaplpy.inversion.phaseLinkingMethod'])
+                d=self.template['miaplpy.inversion.phaseLinkingMethod'],
+                f=self.azimuth_look, g=self.range_look)
 
             run_commands.append(command_line)
         else:
@@ -498,7 +502,7 @@ class miaplpyTimeSeriesAnalysis(TimeSeriesAnalysis):
             tmp_phase_series = '/tmp/phase_series.h5'
         else:
             tmp_phase_series = phase_series
-        num_cpu = os.cpu_count()
+        num_cpu = 4 #os.cpu_count()
         num_lin = 0
         for pair in self.pairs:
             #out_dir = os.path.join(self.ifgram_dir, pair[0] + '_' + pair[1])
@@ -557,7 +561,7 @@ class miaplpyTimeSeriesAnalysis(TimeSeriesAnalysis):
         height = self.metadata['HEIGHT']
 
         run_commands = []
-        num_cpu = os.cpu_count()
+        num_cpu = 4 #os.cpu_count()
         ntiles = self.num_pixels // int(self.template['miaplpy.unwrap.snaphu.tileNumPixels'])
         if ntiles == 0:
             ntiles = 1

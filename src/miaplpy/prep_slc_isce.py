@@ -29,6 +29,7 @@ def enablePrint():
 blockPrint()
 from mintpy.utils import isce_utils, ptime, readfile, writefile, utils as ut
 from miaplpy.objects.utils import read_attribute, read
+from mintpy.constants import EARTH_RADIUS
 enablePrint()
 
 
@@ -106,7 +107,7 @@ def extract_isce_metadata(meta_file, geom_dir=None, rsc_file=None, update_mode=T
                 rsc_file  : str, output file name of ROIPAC format rsc file
     Returns:    metadata  : dict
     """
-    
+     
     if not rsc_file:
         rsc_file = os.path.join(os.path.dirname(meta_file), 'data.rsc')
 
@@ -116,11 +117,12 @@ def extract_isce_metadata(meta_file, geom_dir=None, rsc_file=None, update_mode=T
 
     # 1. extract metadata from XML / shelve file
     processor = isce_utils.get_processor(meta_file)
-
+    
     if processor == 'tops':
         print('extract metadata from ISCE/topsStack xml file:', meta_file)
         metadata, frame = isce_utils.extract_tops_metadata(meta_file)
         metadata['sensor_type'] = 'tops'
+        
 
     elif processor == 'alosStack':
         print('extract metadata from ISCE/alosStack xml file:', meta_file)
@@ -194,6 +196,8 @@ def add_slc_metadata(metadata_in, dates=[], baseline_dict={}):
         bperp_bottom = baseline_dict[dates[1]][1] - baseline_dict[dates[0]][1]
         metadata['P_BASELINE_TOP_HDR'] = str(bperp_top)
         metadata['P_BASELINE_BOTTOM_HDR'] = str(bperp_bottom)
+
+    metadata['EARTH_RADIUS'] = EARTH_RADIUS
     return metadata
 
 
@@ -252,12 +256,14 @@ def prepare_geometry(geom_dir, geom_files=[], metadata=dict(), processor='tops',
     """Prepare and extract metadata from geometry files"""
 
     print('prepare .rsc file for geometry files')
-    # grab all existed files
-
     # default file basenames
     if not geom_files:
         if processor in ['tops', 'stripmap']:
-            geom_files = ['{}.rdr.full.xml'.format(i) for i in GEOMETRY_PREFIXS]
+            geom_files = [os.path.join(geom_dir,'{}.rdr.full'.format(i)) for i in GEOMETRY_PREFIXS]
+            geom_files = [g for g in geom_files if os.path.exists(g)]
+            if len(geom_files) < 5:
+                geom_files = [os.path.join(geom_dir, '{}.rdr.full.xml'.format(i)) for i in GEOMETRY_PREFIXS]
+                geom_files = [g for g in geom_files if os.path.exists(g)]
 
         elif processor in ['alosStack']:
             alooks = metadata['ALOOKS']
@@ -268,17 +274,18 @@ def prepare_geometry(geom_dir, geom_files=[], metadata=dict(), processor='tops',
         else:
             raise Exception('unknown processor: {}'.format(processor))
 
-    # get absolute file paths
-    geom_files = [os.path.join(geom_dir, i) for i in geom_files]
 
     if not os.path.exists(geom_files[0]):
         geom_files = [os.path.join(os.path.abspath(geom_dir), x + '.rdr.xml') for x in GEOMETRY_PREFIXS]
 
-    geom_files = [i for i in geom_files if os.path.isfile(i)]
-
+    # geom_files = [i for i in geom_files if os.path.isfile(i)]
+    
     # write rsc file for each file
     for geom_file in geom_files:
         # prepare metadata for current file
+        #try:
+        #    geom_metadata = read_attribute(geom_file)
+        #except:
         geom_metadata = read_attribute(geom_file.split('.xml')[0], metafile_ext='.xml')
         geom_metadata.update(metadata)
         # write .rsc file
@@ -290,7 +297,7 @@ def prepare_geometry(geom_dir, geom_files=[], metadata=dict(), processor='tops',
 
 
 def prepare_stack(inputDir, filePattern, processor='tops', metadata=dict(), baseline_dict=dict(), update_mode=True):
-
+   
     if not os.path.exists(glob.glob(os.path.join(os.path.abspath(inputDir), '*', filePattern + '.xml'))[0]):
         filePattern = filePattern.split('.full')[0]
     print('preparing RSC file for ', filePattern)

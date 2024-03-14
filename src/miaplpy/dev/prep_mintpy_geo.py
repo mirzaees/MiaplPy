@@ -19,7 +19,8 @@ import numpy as np
 import pyproj
 from osgeo import gdal, osr
 from dolphin import io, stitching
-from dolphin.utils import full_suffix, get_dates
+from dolphin.utils import full_suffix
+from opera_utils import get_dates
 from mintpy.utils import arg_utils, ptime, readfile, writefile
 from mintpy.utils.utils0 import calc_azimuth_from_east_north_obs
 #from dolphin.workflows import group_by_burst
@@ -333,6 +334,9 @@ def prepare_timeseries(
     print("-" * 50)
     print("preparing timeseries file: {}".format(outfile))
 
+    if os.path.exist(outfile):
+        return outfile
+
     # copy metadata to meta
     meta = {key: value for key, value in metadata.items()}
     phase2range = float(meta["WAVELENGTH"]) / (4.0 * np.pi)
@@ -513,11 +517,12 @@ def prepare_stack(
 
     # get list of *.unw.conncomp file
     if metadata['package'] == 'dolphin':
-        cc_files = [x.split('.tif')[0] + '.conncomp' for x in unw_files]
-        cc_files = [x for x in cc_files if Path(x).exists()]
+        cc_files = [x.split('.tif')[0] + '.conncomp.tif' for x in unw_files]
+        cc_files = [x for x in cc_files if os.path.exists(os.path.abspath(x))]
     else:
         cc_files = [x + '.conncomp' for x in unw_files]
         cc_files = [x for x in cc_files if Path(x).exists()]
+        
     print(f"number of connected components files: {len(cc_files)}")
 
     if len(cc_files) != len(unw_files) or len(cor_files) != len(unw_files):
@@ -602,6 +607,8 @@ def stitch_geometry(geom_path_list, geom_dir, meta, dem_file, matching_file):
   
     for ds_name in datasets:
         outfile = geom_dir + f"/{ds_name}_full.tif"
+        if os.path.exists(outfile):
+            continue
         print(f"Creating {outfile}")
         stitched_geom_files.append(outfile)
         # Used to be:
@@ -626,18 +633,21 @@ def stitch_geometry(geom_path_list, geom_dir, meta, dem_file, matching_file):
     #matching_file = '/net/kraken/nobak/smirzaee/Folsom/sequential/crop/scratch/unwrapped/20170114_20170120.unw.tif'
 
     height_file = geom_dir + "/height_rsm.tif"
-    print(f"Creating {height_file}")
-    stitched_geom_files.append(height_file)
-    stitching.warp_to_match(
-        input_file=dem_file,
-        match_file=matching_file,
-        output_file=height_file,
-        resample_alg="cubic",
-    )
+    if not os.path.exists(height_file):
+        print(f"Creating {height_file}")
+        stitched_geom_files.append(height_file)
+        stitching.warp_to_match(
+            input_file=dem_file,
+            match_file=matching_file,
+            output_file=height_file,
+            resample_alg="cubic",
+        )
 
     for ds_name in datasets:
         inpfile = geom_dir + f"/{ds_name}_full.tif"
         outfile = geom_dir + f"/{ds_name}_rsm.tif"
+        if os.path.exists(outfile):
+            continue
         print(f"Creating {outfile}")
 
         stitching.warp_to_match(
@@ -715,13 +725,14 @@ def main(iargs=None):
     stack_file = os.path.join(inps.out_dir, "inputs/ifgramStack.h5")
     ts_file = os.path.join(inps.out_dir, "timeseries.h5")
     geom_file = os.path.join(inps.out_dir, "inputs/geometryGeo.h5")
-    
+
     if inps.package == 'dolphin':
-        geom_path_list = glob.glob(inps.meta_file + '/*/*/static*.h5')
+        geom_path_list = glob.glob(os.path.dirname(inps.meta_file) + '/static*.h5')
+        #geom_path_list = glob.glob(inps.meta_file + '/*/*/static*.h5')
         stitch_geometry(geom_path_list=geom_path_list, geom_dir=os.path.abspath(inps.geom_dir),
                         meta=meta, dem_file=dem_file, matching_file=unw_files[0])
 
-    prepare_geometry(geom_file, geom_dir=inps.geom_dir, metadata=meta)
+    #prepare_geometry(geom_file, geom_dir=inps.geom_dir, metadata=meta)
 
     if inps.single_reference:
         # time-series (if inputs are all single-reference)

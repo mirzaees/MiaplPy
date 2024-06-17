@@ -204,7 +204,7 @@ def prepare_metadata(meta_file, int_file, nlks_x=1, nlks_y=1):
     meta["CENTER_LINE_UTC"] = (
         t_mid - datetime.datetime(t_mid.year, t_mid.month, t_mid.day)
     ).total_seconds()
-    meta["HEIGHT"] = 750000.0
+    meta["HEIGHT"] = 705e3
     meta["STARTING_RANGE"] = float(meta_compass[f"{burst_ds}/starting_range"][()]) + col1 * abs(meta["RANGE_PIXEL_SIZE"])
     meta["PLATFORM"] = meta_compass[f"{burst_ds}/platform_id"][()].decode("utf-8")
     meta["ORBIT_DIRECTION"] = meta_compass[f"{root}/metadata/orbit/orbit_direction"][
@@ -514,10 +514,10 @@ def prepare_stack(
 
     print(f"number of unwrapped interferograms: {num_pair}")
     print(f"number of correlation files: {len(cor_files)}")
-
+    
     # get list of *.unw.conncomp file
     if metadata['package'] == 'dolphin':
-        cc_files = [x.split('.tif')[0] + '.conncomp.tif' for x in unw_files]
+        cc_files = [x.split('.interp')[0] + '.unw.conncomp.tif' for x in unw_files]
         cc_files = [x for x in cc_files if os.path.exists(os.path.abspath(x))]
     else:
         cc_files = [x + '.conncomp' for x in unw_files]
@@ -694,7 +694,7 @@ def main(iargs=None):
     cor_files = sorted(glob.glob(inps.cor_file_glob))
     print(f"Found {len(cor_files)} correlation files")
 
-    dem_file = os.path.abspath(os.path.dirname(inps.geom_dir) + '/dem.tif')
+    dem_file = os.path.abspath(os.path.dirname(inps.geom_dir) + '/elevation.dem')
 
     # translate input options
     processor = "sweets"  # isce_utils.get_processor(inps.meta_file)
@@ -704,7 +704,7 @@ def main(iargs=None):
         # Search for the line of sight static_layers file
         try:
             # Grab the first one in the directory
-            meta_file = next(meta_file.rglob("static_*.h5"))
+            meta_file = next(meta_file.rglob("*STATIC*.h5"))
         except StopIteration:
             raise ValueError(f"No static layers file found in {meta_file}")
 
@@ -727,12 +727,12 @@ def main(iargs=None):
     geom_file = os.path.join(inps.out_dir, "inputs/geometryGeo.h5")
 
     if inps.package == 'dolphin':
-        geom_path_list = glob.glob(os.path.dirname(inps.meta_file) + '/static*.h5')
+        geom_path_list = glob.glob(inps.meta_file + '/*STATIC*.h5')
         #geom_path_list = glob.glob(inps.meta_file + '/*/*/static*.h5')
         stitch_geometry(geom_path_list=geom_path_list, geom_dir=os.path.abspath(inps.geom_dir),
                         meta=meta, dem_file=dem_file, matching_file=unw_files[0])
 
-    #prepare_geometry(geom_file, geom_dir=inps.geom_dir, metadata=meta)
+    prepare_geometry(geom_file, geom_dir=inps.geom_dir, metadata=meta)
 
     if inps.single_reference:
         # time-series (if inputs are all single-reference)

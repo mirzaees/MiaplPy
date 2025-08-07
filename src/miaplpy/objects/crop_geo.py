@@ -35,7 +35,7 @@ CPX_ZERO = np.complex64(0.0)
 dataType = np.complex64
 
 slcDatasetNames = ['slc']
-DSET_UNIT_DICT['slc'] = 'i'
+DSET_UNIT_DICT['slc'] = '1'
 gdal.SetCacheMax(2**30)
 
 

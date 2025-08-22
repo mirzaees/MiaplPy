@@ -362,7 +362,7 @@ def prepare_timeseries(
     cols, rows = io.get_raster_xysize(unw_files[0])
 
     # define dataset structure
-    dates = np.array(date_list, dtype=np.string_)
+    dates = np.array(date_list, dtype=np.bytes_)
     ds_name_dict = {
         "date": [dates.dtype, (num_date,), dates],
         "bperp": [np.float32, (num_date,), pbase],
@@ -381,7 +381,7 @@ def prepare_timeseries(
         prog_bar = ptime.progressBar(maxValue=num_file)
         for i, unw_file in enumerate(unw_files):
             # read data using gdal
-            data = io.load_gdal(unw_file)
+            data = io.load_gdal(unw_file, masked=True)
 
             f["timeseries"][i + 1] = data * phase2range
             prog_bar.update(i + 1, suffix=date12_list[i])
@@ -469,7 +469,7 @@ def prepare_temporal_coherence(outfile, infile, metadata):
     meta["FILE_TYPE"] = "temporalCoherence"
     meta["UNIT"] = "1"
 
-    data = io.load_gdal(infile)
+    data = io.load_gdal(infile, masked=True)
 
     print(data.shape)
     # write to HDF5 file
@@ -488,7 +488,7 @@ def prepare_ps_mask(outfile, infile, metadata):
     meta["UNIT"] = "1"
 
     # read data using gdal
-    data = io.load_gdal(infile)
+    data = io.load_gdal(infile, masked=True)
 
     # write to HDF5 file
     writefile.write(data, outfile, metadata=meta)
@@ -514,15 +514,13 @@ def prepare_stack(
 
     print(f"number of unwrapped interferograms: {num_pair}")
     print(f"number of correlation files: {len(cor_files)}")
-    
     # get list of *.unw.conncomp file
     if metadata['package'] == 'dolphin':
-        cc_files = [x.split('.interp')[0] + '.unw.conncomp.tif' for x in unw_files]
+        cc_files = [x.split('.')[0] + '.unw.conncomp.tif' for x in unw_files]
         cc_files = [x for x in cc_files if os.path.exists(os.path.abspath(x))]
     else:
         cc_files = [x + '.conncomp' for x in unw_files]
         cc_files = [x for x in cc_files if Path(x).exists()]
-        
     print(f"number of connected components files: {len(cc_files)}")
 
     if len(cc_files) != len(unw_files) or len(cor_files) != len(unw_files):
@@ -546,7 +544,7 @@ def prepare_stack(
     cols, rows = io.get_raster_xysize(unw_files[0])
 
     # define (and fill out some) dataset structure
-    date12_arr = np.array([x.split("_") for x in date12_list], dtype=np.string_)
+    date12_arr = np.array([x.split("_") for x in date12_list], dtype=np.bytes_)
     drop_ifgram = np.ones(num_pair, dtype=np.bool_)
     ds_name_dict = {
         "date": [date12_arr.dtype, (num_pair, 2), date12_arr],
@@ -574,15 +572,15 @@ def prepare_stack(
         ):
             # read/write *.unw file
             if metadata['package'] == 'dolphin':
-                f["unwrapPhase"][i] = io.load_gdal(unw_file, band=1)
+                f["unwrapPhase"][i] = io.load_gdal(unw_file, band=1, masked=True)
             else:
-                f["unwrapPhase"][i] = io.load_gdal(unw_file, band=2)
+                f["unwrapPhase"][i] = io.load_gdal(unw_file, band=2, masked=True)
 
             # read/write *.cor file
-            f["coherence"][i] = io.load_gdal(cor_file)
+            f["coherence"][i] = io.load_gdal(cor_file, masked=True)
 
             # read/write *.unw.conncomp file
-            f["connectComponent"][i] = io.load_gdal(cc_file)
+            f["connectComponent"][i] = io.load_gdal(cc_file, masked=True)
 
             prog_bar.update(i + 1, suffix=date12_list[i])
         prog_bar.close()
@@ -694,7 +692,7 @@ def main(iargs=None):
     cor_files = sorted(glob.glob(inps.cor_file_glob))
     print(f"Found {len(cor_files)} correlation files")
 
-    dem_file = os.path.abspath(os.path.dirname(inps.geom_dir) + '/elevation.dem')
+    dem_file = os.path.abspath(os.path.dirname(inps.geom_dir) + '/dem.dem')
 
     # translate input options
     processor = "sweets"  # isce_utils.get_processor(inps.meta_file)

@@ -27,7 +27,7 @@ from mintpy.utils.utils0 import calc_azimuth_from_east_north_obs
 ####################################################################################
 EXAMPLE = """example:
 
-  prep_mintpy_geo.py -u './unwrap/*.unw'  -c './correlations/*.tif' -g './geometry'  -m gslcs/
+  prep_mintpy_geo.py -u './unwrap/*.unw'  -c './correlations/*.tif' -d ./dem.dem -g './geometry'  -m gslcs/
 
 """  # noqa: E501
 
@@ -58,6 +58,13 @@ def _create_parser():
         type=str,
         default="./interferograms/stitched/*.cor",
         help="path pattern of unwrapped interferograms (default: %(default)s).",
+    )
+    parser.add_argument(
+        "-d",
+        "--dem-file",
+        type=str,
+        default="./DEM/dem.dem",
+        help="path to the dEM.",
     )
     parser.add_argument(
         "-g",
@@ -692,7 +699,7 @@ def main(iargs=None):
     cor_files = sorted(glob.glob(inps.cor_file_glob))
     print(f"Found {len(cor_files)} correlation files")
 
-    dem_file = os.path.abspath(os.path.dirname(inps.geom_dir) + '/dem.dem')
+    dem_file = inps.dem_file
 
     # translate input options
     processor = "sweets"  # isce_utils.get_processor(inps.meta_file)

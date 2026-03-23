@@ -2,9 +2,10 @@
 # Author: Sara Mirzaee
 
 import os
+import glob
 import numpy as np
 import argparse
-from datetime import datetime
+from datetime import datetime, timedelta
 from scipy.spatial import Delaunay
 
 def cmd_line_parse(iargs=None):
@@ -111,10 +112,16 @@ def find_baselines(iargs=None):
 def get_baselines_dict(baseline_dir):
 
     bf = os.listdir(baseline_dir)
-    if not bf[0].endswith('txt'):
+    if bf[0].endswith('.base_perp'):
+        # gamma
+        bf2 = bf
+        processor = 'gamma'
+    elif not bf[0].endswith('txt'):
         bf2 = ['{}/{}.txt'.format(d, d) for d in bf]
+        processor = 'isce'
     else:
         bf2 = bf
+        processor = 'isce'
 
     baselines = {}
     reference = bf[0].split('_')[0]
@@ -122,19 +129,45 @@ def get_baselines_dict(baseline_dir):
     dates = [x.split('_')[1].split('.')[0] for x in bf]
     dates.append(reference)
 
-    for d in bf2:
-        secondary = d.split('.txt')[0].split('_')[-1]
-        with open(os.path.join(baseline_dir, d), 'r') as f:
-            lines = f.readlines()
-            if len(lines) != 0:
-                if 'Bperp (average):' in lines[1]:
-                    baseline = float(lines[1].split('Bperp (average):')[1])
-                else:
-                    baseline = float(lines[1].split('PERP_BASELINE_TOP')[1])
-                # baselines.append(baseline)
-                baselines[secondary] = baseline
+    if processor == 'gamma':
+        for d in bf2:
+            secondary = d.split('.base_perp')[0].split('_')[-1]
+            base_dict = read_gamma_perp_baseline(os.path.join(baseline_dir, d))
+            baselines[secondary] = np.mean([float(base_dict['P_BASELINE_TOP_HDR']),
+                                            float(base_dict['P_BASELINE_BOTTOM_HDR'])])
+    else:
+        for d in bf2:
+            secondary = d.split('.txt')[0].split('_')[-1]
+            with open(os.path.join(baseline_dir, d), 'r') as f:
+                lines = f.readlines()
+                if len(lines) != 0:
+                    if 'Bperp (average):' in lines[1]:
+                        baseline = float(lines[1].split('Bperp (average):')[1])
+                    else:
+                        baseline = float(lines[1].split('PERP_BASELINE_TOP')[1])
+                    # baselines.append(baseline)
+                    baselines[secondary] = baseline
     return baselines, dates
 
+def read_gamma_perp_baseline(base_perp_file, atr_dict={}):
+    """
+    load gamma baselines
+    """
+    bperp_list = []
+
+    f = open(base_perp_file)
+    lines = f.readlines()
+    f.close()
+
+    start_line_idx = [lines.index(i)+2 for i in lines if 'bpara       bperp       blen' in i][0]
+    for i in range(start_line_idx, len(lines)):
+        c = lines[i].strip().split()
+        if len(c) == 9:
+            bperp_list.append(float(c[7]))
+
+    atr_dict['P_BASELINE_TOP_HDR'] = str(bperp_list[0])
+    atr_dict['P_BASELINE_BOTTOM_HDR'] = str(bperp_list[-1])
+    return atr_dict
 
 def plot_baselines(ind1, ind2, dates=None, baselines=None, out_dir=None, baseline_dir=None):
     import matplotlib.pyplot as plt
@@ -196,8 +229,8 @@ def find_mini_stacks(date_list, baseline_dir, month=6):
     years = np.array([x.year for x in dates])
     u, indices_first = np.unique(years, return_index=True)
     f_ind = indices_first
-    l_ind = np.zeros(indices_first.shape, dtype=np.int)
-    l_ind[0:-1] = np.array(f_ind[1::]).astype(np.int)
+    l_ind = np.zeros(indices_first.shape, dtype=int)
+    l_ind[0:-1] = np.array(f_ind[1::]).astype(int)
     l_ind[-1] = len(dates)
     ref_inds = []
     for i in range(len(f_ind)):
@@ -224,15 +257,15 @@ def find_mini_stacks(date_list, baseline_dir, month=6):
     return pairs
 
 def find_one_year_interferograms(date_list):
-    dates = np.array([datetime.datetime.strptime(date, '%Y%m%d') for date in date_list])
+    dates = np.array([datetime.strptime(date, '%Y%m%d') for date in date_list])
 
     ifg_ind = []
     for i, date in enumerate(dates):
-        range_1 = date + datetime.timedelta(days=365) - datetime.timedelta(days=5)
-        range_2 = date + datetime.timedelta(days=365) + datetime.timedelta(days=5)
+        range_1 = date + timedelta(days=365) - timedelta(days=5)
+        range_2 = date + timedelta(days=365) + timedelta(days=5)
         index = np.where((dates >= range_1) * (dates <= range_2))[0]
         if len(index) >= 1:
-            date_diff = list(dates[index] - (date + datetime.timedelta(days=365)))
+            date_diff = list(dates[index] - (date + timedelta(days=365)))
             ind = date_diff.index(np.nanmin(date_diff))
             ind_date = index[ind]
             date2 = date_list[ind_date]

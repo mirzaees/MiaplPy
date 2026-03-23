@@ -34,7 +34,7 @@ CPX_ZERO = np.complex64(0.0)
 dataType = np.complex64
 
 slcDatasetNames = ['slc']
-DSET_UNIT_DICT['slc'] = 'i'
+DSET_UNIT_DICT['slc'] = '1'
 gdal.SetCacheMax(2**30)
 ########################################################################################
 
@@ -124,6 +124,8 @@ class slcStackDict:
         maxDigit = max([len(i) for i in self.dsNames])
         self.get_size(box=box, xstep=xstep, ystep=ystep)
 
+        if extra_metadata['PROCESSOR'] == 'gamma':  # keep self.bperp if GAMMA
+            gamma_bperp = self.bperp
         self.bperp = np.zeros(self.numSlc)
 
         ###############################
@@ -163,10 +165,20 @@ class slcStackDict:
 
                     if not box:
                         box = (0, 0, self.width, self.length)
-                    dsSlc = gdal.Open(fname + '.vrt', gdal.GA_ReadOnly)
-                    ds[i, :, :] = dsSlc.GetRasterBand(1).ReadAsArray(int(box[0]), int(box[1]), self.width, self.length)
+                    if metadata['PROCESSOR'] == 'gamma':
+                        ds[i, :, :] = readfile.read_binary(fname,
+                                                           shape=(self.length, self.width),
+                                                           data_type=metadata['DATA_TYPE'],
+                                                           byte_order=metadata['BYTE_ORDER'],
+                                                           cpx_band='cpx')
+                    else:  # isce
+                        dsSlc = gdal.Open(fname + '.vrt', gdal.GA_ReadOnly)
+                        ds[i, :, :] = dsSlc.GetRasterBand(1).ReadAsArray(int(box[0]), int(box[1]), self.width, self.length)
 
-                    self.bperp[i] = slcObj.get_perp_baseline()
+                    if metadata['PROCESSOR'] == 'gamma':
+                        self.bperp[i] = gamma_bperp[self.dates[i]]
+                    else:
+                        self.bperp[i] = slcObj.get_perp_baseline()
                     prog_bar.update(i+1, suffix='{}'.format(self.dates[i][0]))
 
                 prog_bar.close()
@@ -175,7 +187,7 @@ class slcStackDict:
         ###############################
         # 1D dataset containing dates of all images
         dsName = 'date'
-        dsDataType = np.string_
+        dsDataType = np.bytes_
         dsShape = (self.numSlc, 1)
         print('create dataset /{d:<{w}} of {t:<25} in size of {s}'.format(d=dsName,
                                                                           w=maxDigit,
@@ -470,7 +482,7 @@ class slcStack:
                     compression = rf['slc'].compression
             refobj.close(print_msg=False)
         data = np.array(data, dtype='c16')
-        dates = np.array(dates, dtype=np.string_)
+        dates = np.array(dates, dtype=np.bytes_)
         bperp = np.array(bperp, dtype=np.float32)
         metadata = dict(metadata)
         metadata['FILE_TYPE'] = 'timeseries' #self.name
@@ -551,7 +563,8 @@ class slcDict:
             return data
         else:
             # data, metadata = read_binary_file(fname, datasetName=datasetName, box=box)
-            metadata = read_binary_file(fname, datasetName=datasetName, attributes_only=True)
+            metadata = read_binary_file(fname, datasetName=datasetName, attributes_only=True,
+                                        processor=atr['PROCESSOR'])
             return fname, metadata
 
     def get_size(self, family='slc'):

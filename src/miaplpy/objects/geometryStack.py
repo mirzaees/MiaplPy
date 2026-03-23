@@ -53,7 +53,10 @@ class geometryDict(GDict):
             dsName = None
         else:
             dsName = family
-        self.file = self.datasetDict[family].split('.xml')[0]
+        if self.extraMetadata['PROCESSOR'] == 'gamma':
+            self.file = (self.datasetDict[family])
+        else:
+            self.file = self.datasetDict[family].split('.xml')[0]
         data, metadata = read_geo(self.file,
                                   datasetName=dsName,
                                  box=box)
@@ -181,7 +184,7 @@ class geometryDict(GDict):
                 # Write 1D dataset date
                 dsName = 'date'
                 dsShape = (self.numDate,)
-                dsDataType = np.string_
+                dsDataType = np.bytes_
                 print(('create dataset /{d:<{w}} of {t:<25}'
                        ' in size of {s}').format(d=dsName,
                                                  w=maxDigit,
